@@ -20,17 +20,141 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#F7F8FA;color:#374151}
 const {useState,useRef}=React;
 const C={bg:"#F7F8FA",surface:"#fff",border:"#E2E6EA",accent:"#3B82F6",accentLight:"#EFF6FF",text:"#374151",muted:"#6B7280",light:"#9CA3AF",success:"#059669",warn:"#D97706",danger:"#DC2626"};
 
-const QC_CATS=[
-  {id:"general",label:"General Review",icon:"🔍",prompt:"Review this mechanical drawing/document for general completeness, coordination issues, missing information, and any errors or inconsistencies."},
-  {id:"code",label:"Code Compliance",icon:"📜",prompt:"Review this mechanical drawing for code compliance issues. Check against IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A. List violations with specific code sections."},
-  {id:"mep",label:"MEP Coordination",icon:"🔗",prompt:"Review for MEP coordination issues. Identify conflicts with electrical, plumbing, or structural systems. Note missing coordination notes or unclear discipline interfaces."},
-  {id:"energy",label:"Energy Compliance",icon:"⚡",prompt:"Review for ASHRAE 90.1 energy code compliance: insulation, equipment efficiencies, controls sequences, economizer requirements, energy recovery."},
-  {id:"constructability",label:"Constructability",icon:"🏗️",prompt:"Review for constructability issues: difficult installations, missing clearances, access issues, maintenance access, field coordination problems."},
-  {id:"presentation",label:"Drawing Presentation",icon:"🎨",prompt:"Review drawing presentation quality: text overlapping linework, background patterns cluttering the drawing, font compliance (Arial), inconsistent text sizes, missing leaders."},
-];
-
 const PHASES=["SD","50% DD","100% DD","50% CD","90% CD","100% IFC"];
 const PHASE_COLORS={"SD":"#7C3AED","50% DD":"#0891B2","100% DD":"#1D4ED8","50% CD":"#059669","90% CD":"#D97706","100% IFC":"#DC2626"};
+
+const REVIEW_TYPES=[
+  {
+    id:"combined",
+    label:"Full MEP QC Review",
+    icon:"🔍",
+    usesPhase:true,
+    desc:"Comprehensive review — general, code, MEP coordination, energy, constructability, and drawing presentation. Deduplicated into one report.",
+    system:`You are an expert MEP engineer performing a comprehensive QC review of engineering drawings.
+
+Your review must cover ALL of the following in a single unified pass:
+1. General completeness, missing information, errors, and inconsistencies
+2. Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments
+3. MEP coordination — conflicts between disciplines, missing coordination notes
+4. Energy compliance — ASHRAE 90.1, insulation, equipment efficiencies, controls, economizers
+5. Constructability — clearances, access, difficult installations, field coordination
+6. Drawing presentation — text overlapping, font compliance, cluttered backgrounds, missing leaders
+
+IMPORTANT: Do NOT duplicate findings. Each issue appears only once under the most relevant severity level.
+
+Organize findings into these exact sections:
+
+CRITICAL ISSUES:
+[numbered list — must be corrected before issuing]
+
+MAJOR COMMENTS:
+[numbered list — significant items to address]
+
+MINOR COMMENTS:
+[numbered list — items that could be improved]
+
+RECOMMENDATIONS:
+[numbered list — suggestions to improve clarity or quality]
+
+Be specific about sheet numbers, detail references, and applicable code sections where visible.`,
+    userPrompt:"Please perform a comprehensive QC review of this drawing/document."
+  },
+  {
+    id:"proposal",
+    label:"Proposal Review",
+    icon:"📝",
+    usesPhase:false,
+    desc:"Reviews a proposal for scope clarity, completeness, fee adequacy, exclusions, assumptions, and risk items before submission.",
+    system:`You are an expert MEP engineering project manager reviewing a proposal document before submission to a client.
+
+Review the proposal for the following:
+1. Scope of work — is it clearly defined, complete, and unambiguous?
+2. Deliverables — are all deliverables clearly listed with enough detail?
+3. Exclusions — are key exclusions clearly stated to protect the firm?
+4. Assumptions — are assumptions reasonable and adequately documented?
+5. Fee and schedule — does the fee seem appropriate for the scope? Is the schedule realistic?
+6. Risk items — identify any scope gaps, unclear responsibilities, or items that could lead to disputes
+7. Client requirements — does the proposal address all apparent client requirements?
+8. Grammar, clarity, and professionalism — is the writing clear and professional?
+
+IMPORTANT: Do NOT duplicate findings. Each issue appears only once.
+
+Organize findings into these exact sections:
+
+CRITICAL ISSUES:
+[numbered list — must be addressed before submitting]
+
+MAJOR COMMENTS:
+[numbered list — significant items to revise]
+
+MINOR COMMENTS:
+[numbered list — items that could be improved]
+
+RECOMMENDATIONS:
+[numbered list — suggestions to strengthen the proposal]`,
+    userPrompt:"Please review this proposal document."
+  },
+  {
+    id:"narrative",
+    label:"Report / Narrative Review",
+    icon:"📄",
+    usesPhase:false,
+    desc:"Reviews basis of design narratives, engineering reports, and technical documents for accuracy, completeness, and clarity.",
+    system:`You are an expert MEP engineer reviewing a technical report, basis of design narrative, or engineering document.
+
+Review the document for the following:
+1. Technical accuracy — are engineering values, calculations, and references correct?
+2. Completeness — are all required topics covered for this type of document?
+3. Code and standards references — are applicable codes and standards correctly cited and current?
+4. Consistency — are values, descriptions, and system descriptions consistent throughout?
+5. Clarity — is the document clearly written and understandable to the intended audience?
+6. Supporting data — are assumptions, design criteria, and basis of design values documented?
+7. Conclusions and recommendations — are they well-supported and clearly stated?
+8. Grammar, formatting, and professionalism — is the document professional and well-organized?
+
+IMPORTANT: Do NOT duplicate findings. Each issue appears only once.
+
+Organize findings into these exact sections:
+
+CRITICAL ISSUES:
+[numbered list — errors or omissions that must be corrected]
+
+MAJOR COMMENTS:
+[numbered list — significant items to address]
+
+MINOR COMMENTS:
+[numbered list — items that could be improved]
+
+RECOMMENDATIONS:
+[numbered list — suggestions to strengthen the document]`,
+    userPrompt:"Please review this technical report or narrative document."
+  },
+  {
+    id:"custom",
+    label:"Custom Review",
+    icon:"✏️",
+    usesPhase:true,
+    desc:"Write your own review prompt to focus on specific items, details, or concerns.",
+    system:`You are an expert MEP engineer performing a targeted QC review of engineering drawings or documents.
+
+Organize your findings into these exact sections:
+
+CRITICAL ISSUES:
+[numbered list]
+
+MAJOR COMMENTS:
+[numbered list]
+
+MINOR COMMENTS:
+[numbered list]
+
+RECOMMENDATIONS:
+[numbered list]
+
+Be specific about sheet numbers and code sections where applicable.`,
+    userPrompt:""
+  },
+];
 
 const SEV=[
   {key:"CRITICAL ISSUES",label:"Critical Issues",icon:"🚨",bg:"#FEF2F2",border:"#DC2626",color:"#DC2626"},
@@ -52,32 +176,49 @@ function parseFindings(text){
   return sections.length?sections:[{key:"REVIEW",label:"Findings",icon:"📋",bg:"#F9FAFB",border:"#9CA3AF",color:"#374151",content:text}];
 }
 
+function countFindings(text){
+  let total=0;
+  SEV.forEach(sev=>{
+    const keys=SEV.map(s=>s.key).join("|");
+    const regex=new RegExp(sev.key+"[:\\s]*(.*?)(?="+keys+"|$)","si");
+    const match=text.match(regex);
+    if(match&&match[1]){
+      const items=match[1].trim().split(/\n(?=\d+\.)/);
+      total+=items.filter(i=>i.trim().length>2).length;
+    }
+  });
+  return total;
+}
+
 function App(){
   const [projName,setProjName]=useState("");
   const [projLoc,setProjLoc]=useState("");
   const [reviewer,setReviewer]=useState("");
   const [phase,setPhase]=useState("50% CD");
-  const [selCats,setSelCats]=useState(["general"]);
+  const [reviewType,setReviewType]=useState("combined");
+  const [customPrompt,setCustomPrompt]=useState("");
   const [file,setFile]=useState(null);
   const [fileName,setFileName]=useState("");
   const [dragging,setDragging]=useState(false);
   const [loading,setLoading]=useState(false);
-  const [progress,setProgress]=useState({done:0,total:0});
   const [results,setResults]=useState(null);
+  const [error,setError]=useState("");
   const fileRef=useRef();
 
-  const toggleCat=id=>setSelCats(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const activeReview=REVIEW_TYPES.find(r=>r.id===reviewType);
+  const showPhase=activeReview?.usesPhase;
 
   const handleFile=f=>{
     if(!f||f.type!=="application/pdf")return;
-    setFile(f);setFileName(f.name);setResults(null);
+    setFile(f);setFileName(f.name);setResults(null);setError("");
   };
-
   const hd=e=>{e.preventDefault();e.stopPropagation();};
 
+  const canRun=file&&!loading&&(reviewType!=="custom"||(customPrompt.trim().length>10));
+
   const runReview=async()=>{
-    if(!file||loading||!selCats.length)return;
-    setLoading(true);setResults(null);setProgress({done:0,total:selCats.length});
+    if(!canRun)return;
+    setLoading(true);setResults(null);setError("");
 
     const b64=await new Promise((res,rej)=>{
       const rd=new FileReader();
@@ -86,49 +227,47 @@ function App(){
       rd.readAsDataURL(file);
     });
 
-    const cats=QC_CATS.filter(c=>selCats.includes(c.id));
-    const phaseTxt=`\n\nDesign Phase: ${phase}\nFor each finding indicate when it should be resolved.`;
-    const locTxt=projLoc?`\nProject Location: ${projLoc} — apply local codes, climate zone, jurisdiction amendments.`:"";
+    const phaseTxt=showPhase?`\n\nDesign Phase: ${phase}\nFor each finding indicate when it should be resolved.`:"";
+    const locTxt=projLoc?`\nProject Location: ${projLoc} — apply local codes, climate zone, and jurisdiction-specific amendments.`:"";
     const projTxt=projName?`\nProject: ${projName}`:"";
     const revTxt=reviewer?`\nReviewer: ${reviewer}`:"";
 
-    const reviewOne=async cat=>{
-      try{
-        const resp=await fetch("/api/claude",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({
-            model:"claude-sonnet-4-20250514",
-            max_tokens:2000,
-            system:"You are an expert mechanical engineer performing QC review of HVAC drawings. Organize findings into these exact sections:\n\nCRITICAL ISSUES:\n[numbered list]\n\nMAJOR COMMENTS:\n[numbered list]\n\nMINOR COMMENTS:\n[numbered list]\n\nRECOMMENDATIONS:\n[numbered list]\n\nBe specific about locations and sheet numbers where visible. Include code sections for code-related findings.",
-            messages:[{role:"user",content:[
-              {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-              {type:"text",text:cat.prompt+projTxt+locTxt+phaseTxt+revTxt}
-            ]}]
-          })
-        });
-        const data=await resp.json();
-        return{id:cat.id,label:cat.label,icon:cat.icon,text:data.content?.map(i=>i.text||"").join("")||"No response.",ok:true};
-      }catch(e){
-        return{id:cat.id,label:cat.label,icon:cat.icon,text:"Review failed: "+e.message,ok:false};
-      }
-    };
+    const rt=REVIEW_TYPES.find(r=>r.id===reviewType);
+    const userPrompt=(reviewType==="custom"?customPrompt.trim():rt.userPrompt)+projTxt+locTxt+phaseTxt+revTxt;
 
-    // Run all in parallel
-    const promises=cats.map(cat=>reviewOne(cat).then(r=>{
-      setProgress(p=>({...p,done:p.done+1}));
-      return r;
-    }));
-    const all=await Promise.all(promises);
-    setResults({reviews:all,ts:new Date().toLocaleString(),fileName,projName,projLoc,reviewer,phase});
+    try{
+      const resp=await fetch("/api/claude",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:3000,
+          system:rt.system,
+          messages:[{role:"user",content:[
+            {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
+            {type:"text",text:userPrompt}
+          ]}]
+        })
+      });
+      const data=await resp.json();
+      if(data.error){setError("API Error: "+data.error.message);setLoading(false);return;}
+      const text=data.content?.map(i=>i.text||"").join("")||"No response received.";
+      setResults({text,ts:new Date().toLocaleString(),fileName,projName,projLoc,reviewer,phase:showPhase?phase:null,reviewType,customPrompt});
+    }catch(e){
+      setError("Request failed: "+e.message);
+    }
     setLoading(false);
   };
 
   const exportReport=()=>{
     if(!results)return;
+    const rt=REVIEW_TYPES.find(r=>r.id===results.reviewType);
     let txt=`MEP QC REVIEW REPORT\n${"=".repeat(60)}\n`;
-    txt+=`Project: ${results.projName||"---"}\nLocation: ${results.projLoc||"---"}\nPhase: ${results.phase}\nFile: ${results.fileName}\nReviewer: ${results.reviewer||"---"}\nDate: ${results.ts}\n${"=".repeat(60)}\n\n`;
-    results.reviews.forEach(r=>{txt+=`${"-".repeat(60)}\n${r.icon} ${r.label.toUpperCase()}\n${"-".repeat(60)}\n${r.text}\n\n`;});
+    txt+=`Project: ${results.projName||"---"}\nLocation: ${results.projLoc||"---"}\n`;
+    if(results.phase) txt+=`Phase: ${results.phase}\n`;
+    txt+=`File: ${results.fileName}\nReviewer: ${results.reviewer||"---"}\nReview Type: ${rt?.label||results.reviewType}\nDate: ${results.ts}\n`;
+    if(results.reviewType==="custom") txt+=`Custom Prompt: ${results.customPrompt}\n`;
+    txt+=`${"=".repeat(60)}\n\n${results.text}`;
     const a=document.createElement("a");
     a.href="data:text/plain;charset=utf-8,"+encodeURIComponent(txt);
     a.download=`QC_Review_${results.projName||"Report"}.txt`;
@@ -136,45 +275,53 @@ function App(){
   };
 
   const inp={width:"100%",padding:"8px 11px",border:"1px solid "+C.border,borderRadius:7,fontSize:13,color:C.text,background:C.surface,outline:"none"};
-  const phaseColor=PHASE_COLORS[phase]||C.accent;
 
   return(
-    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Segoe UI',Arial,sans-serif"}}>
+    <div style={{minHeight:"100vh",background:C.bg}}>
 
       {/* Header */}
-      <div style={{background:"#1E3A5F",padding:"20px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+      <div style={{background:"#1E3A5F",padding:"18px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:44,height:44,borderRadius:10,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🔍</div>
+          <div style={{width:42,height:42,borderRadius:10,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🔍</div>
           <div>
-            <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>MEP QC Review</div>
-            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)",marginTop:2}}>AI-powered mechanical drawing quality control</div>
+            <div style={{fontSize:19,fontWeight:700,color:"#fff"}}>MEP QC Review</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)",marginTop:1}}>AI-powered quality control for drawings, proposals, and reports</div>
           </div>
         </div>
-        {results&&<button onClick={exportReport} style={{padding:"8px 18px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>📥 Export Report</button>}
+        {results&&(
+          <button onClick={exportReport} style={{padding:"8px 18px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+            📥 Export Report
+          </button>
+        )}
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:0,minHeight:"calc(100vh - 84px)"}}>
+      <div style={{display:"grid",gridTemplateColumns:"300px 1fr",minHeight:"calc(100vh - 78px)"}}>
 
         {/* Sidebar */}
-        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"24px 20px",overflowY:"auto"}}>
+        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"22px 18px",overflowY:"auto"}}>
 
-          <div style={{marginBottom:20}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Project Info</div>
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <div><label style={{fontSize:12,color:C.muted,marginBottom:4,display:"block"}}>Project Name</label><input style={inp} value={projName} onChange={e=>setProjName(e.target.value)} placeholder="e.g. Main Street Office"/></div>
-              <div><label style={{fontSize:12,color:C.muted,marginBottom:4,display:"block"}}>Project Location</label><input style={inp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
-              <div><label style={{fontSize:12,color:C.muted,marginBottom:4,display:"block"}}>Reviewer Initials</label><input style={inp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
+          {/* Project Info */}
+          <div style={{marginBottom:18}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Project Info</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Name</label><input style={inp} value={projName} onChange={e=>setProjName(e.target.value)} placeholder="e.g. Main Street Office"/></div>
+              <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Location</label><input style={inp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
+              <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Reviewer Initials</label><input style={inp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
             </div>
           </div>
 
-          <div style={{borderTop:"1px solid "+C.border,paddingTop:20,marginBottom:20}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Design Phase</div>
-            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {/* Design Phase — only shown for drawing/custom review types */}
+          <div style={{borderTop:"1px solid "+C.border,paddingTop:18,marginBottom:18,opacity:showPhase?1:0.35,transition:"opacity 0.2s",pointerEvents:showPhase?"auto":"none"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Design Phase</div>
+              {!showPhase&&<span style={{fontSize:10,color:C.light,fontStyle:"italic"}}>N/A for this review type</span>}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
               {PHASES.map(p=>{
-                const act=phase===p;const hx=PHASE_COLORS[p];
+                const act=phase===p&&showPhase,hx=PHASE_COLORS[p];
                 return(
-                  <div key={p} onClick={()=>setPhase(p)} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:7,border:"2px solid "+(act?hx:C.border),background:act?hx+"15":C.surface,cursor:"pointer",userSelect:"none"}}>
-                    <div style={{width:14,height:14,borderRadius:"50%",border:"2px solid "+(act?hx:C.border),background:act?hx:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:5,height:5,borderRadius:"50%",background:"white"}}/>}</div>
+                  <div key={p} onClick={()=>showPhase&&setPhase(p)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:7,border:"2px solid "+(act?hx:C.border),background:act?hx+"15":C.surface,cursor:showPhase?"pointer":"default",userSelect:"none"}}>
+                    <div style={{width:13,height:13,borderRadius:"50%",border:"2px solid "+(act?hx:C.border),background:act?hx:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:4,height:4,borderRadius:"50%",background:"white"}}/>}</div>
                     <span style={{fontSize:12,fontWeight:act?700:400,color:act?hx:C.text}}>{p}</span>
                   </div>
                 );
@@ -182,26 +329,40 @@ function App(){
             </div>
           </div>
 
-          <div style={{borderTop:"1px solid "+C.border,paddingTop:20}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Review Types</div>
-              <div style={{display:"flex",gap:4}}>
-                <button onClick={()=>setSelCats(QC_CATS.map(c=>c.id))} style={{padding:"2px 8px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>All</button>
-                <button onClick={()=>setSelCats([])} style={{padding:"2px 8px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>None</button>
-              </div>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {QC_CATS.map(cat=>{
-                const act=selCats.includes(cat.id);
+          {/* Review Type */}
+          <div style={{borderTop:"1px solid "+C.border,paddingTop:18}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Review Type</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {REVIEW_TYPES.map(rt=>{
+                const act=reviewType===rt.id;
                 return(
-                  <div key={cat.id} onClick={()=>toggleCat(cat.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:7,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
-                    <div style={{width:15,height:15,borderRadius:4,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<span style={{color:"white",fontSize:9,fontWeight:700}}>✓</span>}</div>
-                    <span style={{fontSize:12}}>{cat.icon}</span>
-                    <span style={{fontSize:12,fontWeight:act?600:400,color:act?C.accent:C.text}}>{cat.label}</span>
+                  <div key={rt.id} onClick={()=>setReviewType(rt.id)} style={{padding:"10px 12px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                      <div style={{width:14,height:14,borderRadius:"50%",border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:5,height:5,borderRadius:"50%",background:"white"}}/>}</div>
+                      <span style={{fontSize:12,fontWeight:act?700:500,color:act?C.accent:C.text}}>{rt.icon} {rt.label}</span>
+                      {!rt.usesPhase&&<span style={{fontSize:9,color:C.light,background:C.bg,border:"1px solid "+C.border,padding:"1px 5px",borderRadius:3,marginLeft:"auto",flexShrink:0}}>No Phase</span>}
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,lineHeight:1.5,paddingLeft:22}}>{rt.desc}</div>
                   </div>
                 );
               })}
             </div>
+
+            {/* Custom prompt */}
+            {reviewType==="custom"&&(
+              <div style={{marginTop:12}}>
+                <label style={{fontSize:11,color:C.muted,marginBottom:5,display:"block",fontWeight:600}}>Your Review Prompt</label>
+                <textarea
+                  value={customPrompt}
+                  onChange={e=>setCustomPrompt(e.target.value)}
+                  placeholder={"Describe what you want reviewed...\n\nExamples:\n• Check duct sizes against the schedule\n• Verify equipment tags match the schedule\n• Review kitchen hood compliance with NFPA 96\n• Check all fire damper locations"}
+                  style={{...inp,height:150,resize:"vertical",fontSize:12,lineHeight:1.6}}
+                />
+                <div style={{fontSize:10,color:customPrompt.length<10?C.danger:C.success,marginTop:4}}>
+                  {customPrompt.length<10?"Enter at least 10 characters":"✓ Ready"}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -219,28 +380,39 @@ function App(){
           >
             <span style={{fontSize:40}}>{dragging?"📂":file?"✅":"📄"}</span>
             <div style={{textAlign:"center"}}>
-              <div style={{fontSize:14,fontWeight:600,color:file?"#059669":dragging?C.accent:C.text,marginBottom:3}}>{file?fileName:dragging?"Drop PDF here":"Drag & drop a PDF drawing or click to browse"}</div>
-              {!file&&<div style={{fontSize:12,color:C.muted}}>Accepts mechanical drawings, calculations, or specifications</div>}
+              <div style={{fontSize:14,fontWeight:600,color:file?"#059669":dragging?C.accent:C.text,marginBottom:3}}>
+                {file?fileName:dragging?"Drop PDF here":"Drag & drop a PDF or click to browse"}
+              </div>
+              {!file&&<div style={{fontSize:12,color:C.muted}}>
+                {reviewType==="proposal"?"Accepts proposal PDFs — scope, fee, schedule, terms":reviewType==="narrative"?"Accepts basis of design, engineering reports, or narratives":"Accepts mechanical drawings, calculations, or specifications"}
+              </div>}
             </div>
-            {file&&!loading&&<button onClick={e=>{e.stopPropagation();setFile(null);setFileName("");setResults(null);}} style={{fontSize:11,color:C.danger,background:"none",border:"1px solid "+C.danger,borderRadius:5,padding:"3px 10px",cursor:"pointer"}}>Remove</button>}
+            {file&&!loading&&(
+              <button onClick={e=>{e.stopPropagation();setFile(null);setFileName("");setResults(null);}} style={{fontSize:11,color:C.danger,background:"none",border:"1px solid "+C.danger,borderRadius:5,padding:"3px 10px",cursor:"pointer"}}>Remove</button>
+            )}
             <input ref={fileRef} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleFile(e.target.files[0]);e.target.value="";}}/>
           </div>
 
+          {error&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:16,color:C.danger,fontSize:13}}>{error}</div>}
+
           {/* Run button */}
           {file&&!loading&&(
-            <button onClick={runReview} disabled={!selCats.length} style={{width:"100%",padding:"14px",background:selCats.length?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:selCats.length?"pointer":"not-allowed",marginBottom:24,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              🔍 Run {selCats.length} Review{selCats.length!==1?"s":""} — {phase}
+            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"14px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:24,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              {activeReview?.icon} Run {activeReview?.label}
+              {showPhase&&<span style={{opacity:0.8,fontWeight:500,fontSize:13}}>— {phase}</span>}
             </button>
           )}
 
           {/* Loading */}
           {loading&&(
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:32,textAlign:"center",marginBottom:24}}>
-              <div style={{width:40,height:40,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/>
-              <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:6}}>Running {progress.total} reviews in parallel...</div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:14}}>{progress.done} of {progress.total} complete</div>
-              <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
-                <div style={{height:6,background:C.accent,borderRadius:3,width:(progress.total>0?progress.done/progress.total*100:0)+"%",transition:"width 0.3s"}}/>
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:40,textAlign:"center",marginBottom:24}}>
+              <div style={{width:44,height:44,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 18px"}}/>
+              <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>Running {activeReview?.label}...</div>
+              <div style={{fontSize:12,color:C.muted}}>
+                {reviewType==="combined"&&"Checking general, code, MEP, energy, constructability, and presentation in one pass"}
+                {reviewType==="proposal"&&"Reviewing scope, deliverables, exclusions, fees, risks, and clarity"}
+                {reviewType==="narrative"&&"Reviewing technical accuracy, completeness, code references, and consistency"}
+                {reviewType==="custom"&&"Analyzing document based on your custom prompt"}
               </div>
             </div>
           )}
@@ -248,40 +420,70 @@ function App(){
           {/* Results */}
           {results&&(
             <div style={{animation:"fadeIn 0.3s ease"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
+              <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                 <div>
-                  <div style={{fontSize:18,fontWeight:700,color:C.text}}>QC Review Results</div>
-                  <div style={{fontSize:12,color:C.muted,marginTop:2}}>{results.fileName}{results.projName?" · "+results.projName:""}{results.projLoc?" · "+results.projLoc:""} · <span style={{color:PHASE_COLORS[results.phase],fontWeight:600}}>{results.phase}</span>{results.reviewer?" · "+results.reviewer:""} · {results.ts}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5,flexWrap:"wrap"}}>
+                    <div style={{fontSize:16,fontWeight:700,color:C.text}}>
+                      {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.icon} {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.label}
+                    </div>
+                    {results.phase&&(
+                      <span style={{fontSize:11,fontWeight:700,color:PHASE_COLORS[results.phase],background:PHASE_COLORS[results.phase]+"18",border:"1px solid "+PHASE_COLORS[results.phase],padding:"2px 8px",borderRadius:20}}>
+                        {results.phase}
+                      </span>
+                    )}
+                    <span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,border:"1px solid "+C.border,padding:"2px 8px",borderRadius:20}}>
+                      {countFindings(results.text)} findings
+                    </span>
+                  </div>
+                  <div style={{fontSize:12,color:C.muted}}>
+                    {results.fileName}
+                    {results.projName&&" · "+results.projName}
+                    {results.projLoc&&" · "+results.projLoc}
+                    {results.reviewer&&" · "+results.reviewer}
+                    {" · "+results.ts}
+                  </div>
+                  {results.reviewType==="custom"&&results.customPrompt&&(
+                    <div style={{marginTop:6,fontSize:11,color:C.muted,background:C.accentLight,borderRadius:6,padding:"5px 10px",border:"1px solid #BFDBFE",maxWidth:600}}>
+                      <strong style={{color:C.accent}}>Prompt:</strong> {results.customPrompt}
+                    </div>
+                  )}
                 </div>
-                <button onClick={exportReport} style={{padding:"8px 16px",background:"transparent",color:C.accent,border:"1px solid "+C.accent,borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>📥 Export Report</button>
+                <button onClick={exportReport} style={{padding:"7px 14px",background:"transparent",color:C.accent,border:"1px solid "+C.accent,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+                  📥 Export
+                </button>
               </div>
 
-              {results.reviews.map(rev=>(
-                <div key={rev.id} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,marginBottom:16,overflow:"hidden"}}>
-                  <div style={{padding:"12px 18px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:18}}>{rev.icon}</span>
-                    <span style={{fontSize:14,fontWeight:700,color:C.text}}>{rev.label}</span>
-                    {!rev.ok&&<span style={{fontSize:11,color:C.danger,marginLeft:"auto"}}>⚠️ Error</span>}
-                  </div>
-                  <div style={{padding:16}}>
-                    {parseFindings(rev.text).map((sec,i)=>(
-                      <div key={i} style={{background:sec.bg,borderLeft:"4px solid "+sec.border,borderRadius:"0 6px 6px 0",padding:"12px 16px",marginBottom:10}}>
-                        <div style={{fontSize:12,fontWeight:700,color:sec.color,marginBottom:8}}>{sec.icon} {sec.label}</div>
-                        <div style={{fontSize:12,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{sec.content}</div>
-                      </div>
-                    ))}
-                  </div>
+              <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"12px 18px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:600,color:C.text}}>
+                  Review Findings
                 </div>
-              ))}
+                <div style={{padding:16}}>
+                  {parseFindings(results.text).map((sec,i)=>(
+                    <div key={i} style={{background:sec.bg,borderLeft:"4px solid "+sec.border,borderRadius:"0 8px 8px 0",padding:"14px 18px",marginBottom:12}}>
+                      <div style={{fontSize:13,fontWeight:700,color:sec.color,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+                        <span>{sec.icon}</span>{sec.label}
+                      </div>
+                      <div style={{fontSize:12.5,color:C.text,lineHeight:1.85,whiteSpace:"pre-wrap"}}>{sec.content}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
           {/* Empty state */}
           {!file&&!loading&&!results&&(
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:60,textAlign:"center",color:C.light}}>
-              <div style={{fontSize:48,marginBottom:16}}>🔍</div>
-              <div style={{fontSize:16,fontWeight:600,marginBottom:8,color:C.muted}}>Ready to review</div>
-              <div style={{fontSize:13,maxWidth:400,margin:"0 auto",lineHeight:1.7}}>Upload a mechanical drawing PDF, select your review types and design phase, then click Run Reviews.</div>
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:60,textAlign:"center"}}>
+              <div style={{fontSize:48,marginBottom:16}}>
+                {reviewType==="proposal"?"📝":reviewType==="narrative"?"📄":reviewType==="custom"?"✏️":"🔍"}
+              </div>
+              <div style={{fontSize:16,fontWeight:600,marginBottom:8,color:C.muted}}>Ready for {activeReview?.label}</div>
+              <div style={{fontSize:13,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>
+                {reviewType==="combined"&&"Upload a mechanical drawing PDF for a comprehensive review covering all QC categories in one deduplicated report."}
+                {reviewType==="proposal"&&"Upload a proposal PDF to review scope clarity, exclusions, fee adequacy, assumptions, and risk items before submission."}
+                {reviewType==="narrative"&&"Upload a basis of design, engineering report, or technical narrative for a review of accuracy, completeness, and consistency."}
+                {reviewType==="custom"&&"Enter your review prompt in the sidebar, upload a PDF, and run a targeted review focused on exactly what you need."}
+              </div>
             </div>
           )}
         </div>

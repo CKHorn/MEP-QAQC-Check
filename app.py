@@ -162,7 +162,7 @@ else:
         rev_txt = f"\nReviewer: {reviewer}" if reviewer else ""
 
        import os
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
         def run_single_review(cat_name):
             cat = QC_CATS[cat_name]

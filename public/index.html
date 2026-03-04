@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MEP QC Review</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#F7F8FA;color:#374151}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useRef}=React;
+const C={bg:"#F7F8FA",surface:"#fff",border:"#E2E6EA",accent:"#3B82F6",accentLight:"#EFF6FF",text:"#374151",muted:"#6B7280",light:"#9CA3AF",success:"#059669",warn:"#D97706",danger:"#DC2626"};
+
+const QC_CATS=[
+  {id:"general",label:"General Review",icon:"🔍",prompt:"Review this mechanical drawing/document for general completeness, coordination issues, missing information, and any errors or inconsistencies."},
+  {id:"code",label:"Code Compliance",icon:"📜",prompt:"Review this mechanical drawing for code compliance issues. Check against IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A. List violations with specific code sections."},
+  {id:"mep",label:"MEP Coordination",icon:"🔗",prompt:"Review for MEP coordination issues. Identify conflicts with electrical, plumbing, or structural systems. Note missing coordination notes or unclear discipline interfaces."},
+  {id:"energy",label:"Energy Compliance",icon:"⚡",prompt:"Review for ASHRAE 90.1 energy code compliance: insulation, equipment efficiencies, controls sequences, economizer requirements, energy recovery."},
+  {id:"constructability",label:"Constructability",icon:"🏗️",prompt:"Review for constructability issues: difficult installations, missing clearances, access issues, maintenance access, field coordination problems."},
+  {id:"presentation",label:"Drawing Presentation",icon:"🎨",prompt:"Review drawing presentation quality: text overlapping linework, background patterns cluttering the drawing, font compliance (Arial), inconsistent text sizes, missing leaders."},
+];
+
+const PHASES=["SD","50% DD","100% DD","50% CD","90% CD","100% IFC"];
+const PHASE_COLORS={"SD":"#7C3AED","50% DD":"#0891B2","100% DD":"#1D4ED8","50% CD":"#059669","90% CD":"#D97706","100% IFC":"#DC2626"};
+
+const SEV=[
+  {key:"CRITICAL ISSUES",label:"Critical Issues",icon:"🚨",bg:"#FEF2F2",border:"#DC2626",color:"#DC2626"},
+  {key:"MAJOR COMMENTS",label:"Major Comments",icon:"⚠️",bg:"#FFFBEB",border:"#D97706",color:"#D97706"},
+  {key:"MINOR COMMENTS",label:"Minor Comments",icon:"ℹ️",bg:"#EFF6FF",border:"#2563EB",color:"#2563EB"},
+  {key:"RECOMMENDATIONS",label:"Recommendations",icon:"💡",bg:"#F0FDF4",border:"#059669",color:"#059669"},
+];
+
+function parseFindings(text){
+  const sections=[];
+  SEV.forEach(sev=>{
+    const keys=SEV.map(s=>s.key).join("|");
+    const regex=new RegExp(sev.key+"[:\\s]*(.*?)(?="+keys+"|$)","si");
+    const match=text.match(regex);
+    if(match&&match[1].trim()&&!["none","n/a","—","-","none identified."].includes(match[1].trim().toLowerCase())){
+      sections.push({...sev,content:match[1].trim()});
+    }
+  });
+  return sections.length?sections:[{key:"REVIEW",label:"Findings",icon:"📋",bg:"#F9FAFB",border:"#9CA3AF",color:"#374151",content:text}];
+}
+
+function App(){
+  const [projName,setProjName]=useState("");
+  const [projLoc,setProjLoc]=useState("");
+  const [reviewer,setReviewer]=useState("");
+  const [phase,setPhase]=useState("50% CD");
+  const [selCats,setSelCats]=useState(["general"]);
+  const [file,setFile]=useState(null);
+  const [fileName,setFileName]=useState("");
+  const [dragging,setDragging]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const [progress,setProgress]=useState({done:0,total:0});
+  const [results,setResults]=useState(null);
+  const fileRef=useRef();
+
+  const toggleCat=id=>setSelCats(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+
+  const handleFile=f=>{
+    if(!f||f.type!=="application/pdf")return;
+    setFile(f);setFileName(f.name);setResults(null);
+  };
+
+  const hd=e=>{e.preventDefault();e.stopPropagation();};
+
+  const runReview=async()=>{
+    if(!file||loading||!selCats.length)return;
+    setLoading(true);setResults(null);setProgress({done:0,total:selCats.length});
+
+    const b64=await new Promise((res,rej)=>{
+      const rd=new FileReader();
+      rd.onload=()=>res(rd.result.split(",")[1]);
+      rd.onerror=rej;
+      rd.readAsDataURL(file);
+    });
+
+    const cats=QC_CATS.filter(c=>selCats.includes(c.id));
+    const phaseTxt=`\n\nDesign Phase: ${phase}\nFor each finding indicate when it should be resolved.`;
+    const locTxt=projLoc?`\nProject Location: ${projLoc} — apply local codes, climate zone, jurisdiction amendments.`:"";
+    const projTxt=projName?`\nProject: ${projName}`:"";
+    const revTxt=reviewer?`\nReviewer: ${reviewer}`:"";
+
+    const reviewOne=async cat=>{
+      try{
+        const resp=await fetch("/api/claude",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            model:"claude-sonnet-4-20250514",
+            max_tokens:2000,
+            system:"You are an expert mechanical engineer performing QC review of HVAC drawings. Organize findings into these exact sections:\n\nCRITICAL ISSUES:\n[numbered list]\n\nMAJOR COMMENTS:\n[numbered list]\n\nMINOR COMMENTS:\n[numbered list]\n\nRECOMMENDATIONS:\n[numbered list]\n\nBe specific about locations and sheet numbers where visible. Include code sections for code-related findings.",
+            messages:[{role:"user",content:[
+              {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
+              {type:"text",text:cat.prompt+projTxt+locTxt+phaseTxt+revTxt}
+            ]}]
+          })
+        });
+        const data=await resp.json();
+        return{id:cat.id,label:cat.label,icon:cat.icon,text:data.content?.map(i=>i.text||"").join("")||"No response.",ok:true};
+      }catch(e){
+        return{id:cat.id,label:cat.label,icon:cat.icon,text:"Review failed: "+e.message,ok:false};
+      }
+    };
+
+    // Run all in parallel
+    const promises=cats.map(cat=>reviewOne(cat).then(r=>{
+      setProgress(p=>({...p,done:p.done+1}));
+      return r;
+    }));
+    const all=await Promise.all(promises);
+    setResults({reviews:all,ts:new Date().toLocaleString(),fileName,projName,projLoc,reviewer,phase});
+    setLoading(false);
+  };
+
+  const exportReport=()=>{
+    if(!results)return;
+    let txt=`MEP QC REVIEW REPORT\n${"=".repeat(60)}\n`;
+    txt+=`Project: ${results.projName||"---"}\nLocation: ${results.projLoc||"---"}\nPhase: ${results.phase}\nFile: ${results.fileName}\nReviewer: ${results.reviewer||"---"}\nDate: ${results.ts}\n${"=".repeat(60)}\n\n`;
+    results.reviews.forEach(r=>{txt+=`${"-".repeat(60)}\n${r.icon} ${r.label.toUpperCase()}\n${"-".repeat(60)}\n${r.text}\n\n`;});
+    const a=document.createElement("a");
+    a.href="data:text/plain;charset=utf-8,"+encodeURIComponent(txt);
+    a.download=`QC_Review_${results.projName||"Report"}.txt`;
+    a.click();
+  };
+
+  const inp={width:"100%",padding:"8px 11px",border:"1px solid "+C.border,borderRadius:7,fontSize:13,color:C.text,background:C.surface,outline:"none"};
+  const phaseColor=PHASE_COLORS[phase]||C.accent;
+
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Segoe UI',Arial,sans-serif"}}>
+
+      {/* Header */}
+      <div style={{background:"#1E3A5F",padding:"20px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:44,height:44,borderRadius:10,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🔍</div>
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>MEP QC Review</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)",marginTop:2}}>AI-powered mechanical drawing quality control</div>
+          </div>
+        </div>
+        {results&&<button onClick={exportReport} style={{padding:"8px 18px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>📥 Export Report</button>}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:0,minHeight:"calc(100vh - 84px)"}}>
+
+        {/* Sidebar */}
+        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"24px 20px",overflowY:"auto"}}>
+
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Project Info</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div><label style={{fontSize:12,color:C.muted,marginBottom:4,display:"block"}}>Project Name</label><input style={inp} value={projName} onChange={e=>setProjName(e.target.value)} placeholder="e.g. Main Street Office"/></div>
+              <div><label style={{fontSize:12,color:C.muted,marginBottom:4,display:"block"}}>Project Location</label><input style={inp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
+              <div><label style={{fontSize:12,color:C.muted,marginBottom:4,display:"block"}}>Reviewer Initials</label><input style={inp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
+            </div>
+          </div>
+
+          <div style={{borderTop:"1px solid "+C.border,paddingTop:20,marginBottom:20}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Design Phase</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {PHASES.map(p=>{
+                const act=phase===p;const hx=PHASE_COLORS[p];
+                return(
+                  <div key={p} onClick={()=>setPhase(p)} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:7,border:"2px solid "+(act?hx:C.border),background:act?hx+"15":C.surface,cursor:"pointer",userSelect:"none"}}>
+                    <div style={{width:14,height:14,borderRadius:"50%",border:"2px solid "+(act?hx:C.border),background:act?hx:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:5,height:5,borderRadius:"50%",background:"white"}}/>}</div>
+                    <span style={{fontSize:12,fontWeight:act?700:400,color:act?hx:C.text}}>{p}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{borderTop:"1px solid "+C.border,paddingTop:20}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Review Types</div>
+              <div style={{display:"flex",gap:4}}>
+                <button onClick={()=>setSelCats(QC_CATS.map(c=>c.id))} style={{padding:"2px 8px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>All</button>
+                <button onClick={()=>setSelCats([])} style={{padding:"2px 8px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>None</button>
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {QC_CATS.map(cat=>{
+                const act=selCats.includes(cat.id);
+                return(
+                  <div key={cat.id} onClick={()=>toggleCat(cat.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:7,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
+                    <div style={{width:15,height:15,borderRadius:4,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<span style={{color:"white",fontSize:9,fontWeight:700}}>✓</span>}</div>
+                    <span style={{fontSize:12}}>{cat.icon}</span>
+                    <span style={{fontSize:12,fontWeight:act?600:400,color:act?C.accent:C.text}}>{cat.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Main content */}
+        <div style={{padding:28,overflowY:"auto"}}>
+
+          {/* Upload zone */}
+          <div
+            onDragEnter={e=>{hd(e);setDragging(true);}}
+            onDragLeave={e=>{hd(e);setDragging(false);}}
+            onDragOver={hd}
+            onDrop={e=>{hd(e);setDragging(false);handleFile(e.dataTransfer.files[0]);}}
+            onClick={()=>!loading&&fileRef.current.click()}
+            style={{border:"2px dashed "+(dragging?C.accent:file?"#059669":C.border),borderRadius:12,background:dragging?C.accentLight:file?"#F0FDF4":C.surface,padding:"32px 24px",cursor:loading?"not-allowed":"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,marginBottom:20,transition:"all 0.15s"}}
+          >
+            <span style={{fontSize:40}}>{dragging?"📂":file?"✅":"📄"}</span>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:14,fontWeight:600,color:file?"#059669":dragging?C.accent:C.text,marginBottom:3}}>{file?fileName:dragging?"Drop PDF here":"Drag & drop a PDF drawing or click to browse"}</div>
+              {!file&&<div style={{fontSize:12,color:C.muted}}>Accepts mechanical drawings, calculations, or specifications</div>}
+            </div>
+            {file&&!loading&&<button onClick={e=>{e.stopPropagation();setFile(null);setFileName("");setResults(null);}} style={{fontSize:11,color:C.danger,background:"none",border:"1px solid "+C.danger,borderRadius:5,padding:"3px 10px",cursor:"pointer"}}>Remove</button>}
+            <input ref={fileRef} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleFile(e.target.files[0]);e.target.value="";}}/>
+          </div>
+
+          {/* Run button */}
+          {file&&!loading&&(
+            <button onClick={runReview} disabled={!selCats.length} style={{width:"100%",padding:"14px",background:selCats.length?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:selCats.length?"pointer":"not-allowed",marginBottom:24,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              🔍 Run {selCats.length} Review{selCats.length!==1?"s":""} — {phase}
+            </button>
+          )}
+
+          {/* Loading */}
+          {loading&&(
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:32,textAlign:"center",marginBottom:24}}>
+              <div style={{width:40,height:40,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/>
+              <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:6}}>Running {progress.total} reviews in parallel...</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:14}}>{progress.done} of {progress.total} complete</div>
+              <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
+                <div style={{height:6,background:C.accent,borderRadius:3,width:(progress.total>0?progress.done/progress.total*100:0)+"%",transition:"width 0.3s"}}/>
+              </div>
+            </div>
+          )}
+
+          {/* Results */}
+          {results&&(
+            <div style={{animation:"fadeIn 0.3s ease"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
+                <div>
+                  <div style={{fontSize:18,fontWeight:700,color:C.text}}>QC Review Results</div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:2}}>{results.fileName}{results.projName?" · "+results.projName:""}{results.projLoc?" · "+results.projLoc:""} · <span style={{color:PHASE_COLORS[results.phase],fontWeight:600}}>{results.phase}</span>{results.reviewer?" · "+results.reviewer:""} · {results.ts}</div>
+                </div>
+                <button onClick={exportReport} style={{padding:"8px 16px",background:"transparent",color:C.accent,border:"1px solid "+C.accent,borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>📥 Export Report</button>
+              </div>
+
+              {results.reviews.map(rev=>(
+                <div key={rev.id} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,marginBottom:16,overflow:"hidden"}}>
+                  <div style={{padding:"12px 18px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:18}}>{rev.icon}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:C.text}}>{rev.label}</span>
+                    {!rev.ok&&<span style={{fontSize:11,color:C.danger,marginLeft:"auto"}}>⚠️ Error</span>}
+                  </div>
+                  <div style={{padding:16}}>
+                    {parseFindings(rev.text).map((sec,i)=>(
+                      <div key={i} style={{background:sec.bg,borderLeft:"4px solid "+sec.border,borderRadius:"0 6px 6px 0",padding:"12px 16px",marginBottom:10}}>
+                        <div style={{fontSize:12,fontWeight:700,color:sec.color,marginBottom:8}}>{sec.icon} {sec.label}</div>
+                        <div style={{fontSize:12,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{sec.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!file&&!loading&&!results&&(
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:60,textAlign:"center",color:C.light}}>
+              <div style={{fontSize:48,marginBottom:16}}>🔍</div>
+              <div style={{fontSize:16,fontWeight:600,marginBottom:8,color:C.muted}}>Ready to review</div>
+              <div style={{fontSize:13,maxWidth:400,margin:"0 auto",lineHeight:1.7}}>Upload a mechanical drawing PDF, select your review types and design phase, then click Run Reviews.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>

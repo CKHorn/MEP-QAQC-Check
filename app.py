@@ -161,7 +161,8 @@ else:
         proj_txt = f"\nProject: {project_name}" if project_name else ""
         rev_txt = f"\nReviewer: {reviewer}" if reviewer else ""
 
-        client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+       import os
+client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
         def run_single_review(cat_name):
             cat = QC_CATS[cat_name]

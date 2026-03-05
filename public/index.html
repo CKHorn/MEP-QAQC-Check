@@ -23,10 +23,44 @@ const C={bg:"#F7F8FA",surface:"#fff",border:"#E2E6EA",accent:"#3B82F6",accentLig
 const PHASES=["SD","50% DD","100% DD","50% CD","90% CD","100% IFC"];
 const PHASE_COLORS={"SD":"#7C3AED","50% DD":"#0891B2","100% DD":"#1D4ED8","50% CD":"#059669","90% CD":"#D97706","100% IFC":"#DC2626"};
 
+const PARTIAL_CATS=[
+  {id:"code",label:"Code Compliance",icon:"📜",desc:"IMC, ASHRAE 62.1, 90.1, NFPA 90A, NEC, IBC"},
+  {id:"legibility",label:"Legibility & Presentation",icon:"🎨",desc:"Text overlap, font compliance, cluttered backgrounds, missing leaders"},
+  {id:"coordination",label:"MEP Coordination",icon:"🔗",desc:"Discipline conflicts, missing coordination notes"},
+  {id:"completeness",label:"Completeness",icon:"✅",desc:"Missing info, notes, schedules, details"},
+  {id:"constructability",label:"Constructability",icon:"🏗️",desc:"Clearances, access, difficult installations"},
+  {id:"energy",label:"Energy Compliance",icon:"⚡",desc:"ASHRAE 90.1, insulation, efficiencies, economizers"},
+
+];
+
 const REVIEW_TYPES=[
   {
+    id:"partial",label:"Partial QC Review",icon:"🔎",usesPhase:true,isSubmittal:false,
+    desc:"Select specific review categories to check. Faster and more targeted than a full review.",
+    system:(cats)=>`You are an expert MEP engineer performing a targeted QC review of engineering drawings.
+
+You are ONLY reviewing for the following selected categories:
+${cats.map((c,i)=>`${i+1}. ${c.label} — ${c.desc}`).join("\n")}
+
+Focus exclusively on these areas. Do not comment on anything outside these categories.
+IMPORTANT: Do NOT duplicate findings across categories. Each issue appears only once.
+
+Organize findings into these exact sections:
+CRITICAL ISSUES:
+[numbered list — must be corrected before issuing]
+MAJOR COMMENTS:
+[numbered list — significant items to address]
+MINOR COMMENTS:
+[numbered list — items that could be improved]
+RECOMMENDATIONS:
+[numbered list — suggestions to improve clarity or quality]
+
+Be specific about sheet numbers, detail references, and applicable code sections where visible.`,
+    userPrompt:"Please perform a targeted QC review of this drawing based on the selected categories."
+  },
+  {
     id:"combined",label:"Full MEP QC Review",icon:"🔍",usesPhase:true,isSubmittal:false,
-    desc:"Comprehensive review — general, code, MEP coordination, energy, constructability, and drawing presentation. Deduplicated into one report.",
+    desc:"Comprehensive review covering all categories — general, code, MEP coordination, energy, constructability, and drawing presentation. Deduplicated into one report.",
     system:`You are an expert MEP engineer performing a comprehensive QC review of engineering drawings.
 Your review must cover ALL of the following in a single unified pass:
 1. General completeness, missing information, errors, and inconsistencies
@@ -35,6 +69,7 @@ Your review must cover ALL of the following in a single unified pass:
 4. Energy compliance — ASHRAE 90.1, insulation, equipment efficiencies, controls, economizers
 5. Constructability — clearances, access, difficult installations, field coordination
 6. Drawing presentation — text overlapping, font compliance, cluttered backgrounds, missing leaders
+7. Kimley-Horn logo — verify the Kimley-Horn logo is present on every sheet in the title block. Flag any sheet where it is missing, incorrect, or replaced with a different firm logo.
 IMPORTANT: Do NOT duplicate findings. Each issue appears only once under the most relevant severity level.
 Organize findings into these exact sections:
 CRITICAL ISSUES:
@@ -216,8 +251,9 @@ function App(){
   const [projLoc,setProjLoc]=useState("");
   const [reviewer,setReviewer]=useState("");
   const [phase,setPhase]=useState("50% CD");
-  const [reviewType,setReviewType]=useState("combined");
+  const [reviewType,setReviewType]=useState("partial");
   const [customPrompt,setCustomPrompt]=useState("");
+  const [partialCats,setPartialCats]=useState(["code","legibility"]);
 
   // Primary file (drawing / document / submittal)
   const [file,setFile]=useState(null);
@@ -238,9 +274,46 @@ function App(){
   const handleFile=f=>{if(!f||f.type!=="application/pdf")return;setFile(f);setFileName(f.name);setResults(null);setError("");};
   const handleRefFile=f=>{if(!f||f.type!=="application/pdf")return;setRefFile(f);setRefFileName(f.name);setResults(null);setError("");};
 
-  const canRun=file&&!loading&&(!isSubmittal||refFile)&&(reviewType!=="custom"||(customPrompt.trim().length>10));
+  const canRun=file&&!loading&&(!isSubmittal||refFile)&&(reviewType!=="custom"||(customPrompt.trim().length>10))&&(reviewType!=="partial"||partialCats.length>0);
 
   const toB64=f=>new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result.split(",")[1]);rd.onerror=rej;rd.readAsDataURL(f);});
+
+  const getSystemPrompt=()=>{
+    const rt=activeReview;
+    if(reviewType==="partial"){
+      const selected=PARTIAL_CATS.filter(c=>partialCats.includes(c.id));
+      const catDescriptions={
+      code:"Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments",
+      legibility:"Legibility and drawing presentation — text overlapping linework, background patterns cluttering the drawing, font compliance (Arial), inconsistent text sizes, missing leaders or callouts",
+      coordination:"MEP coordination — conflicts between disciplines, missing coordination notes, unclear interfaces between electrical, plumbing, structural, and mechanical",
+      completeness:"Completeness — missing information, incomplete notes, missing schedules, unreferenced details, blank fields",
+      constructability:"Constructability — missing clearances, difficult installations, access issues, maintenance access, field coordination problems",
+      energy:"Energy compliance — ASHRAE 90.1, insulation requirements, equipment efficiencies, controls sequences, economizer requirements, energy recovery",
+      kh_logo:"Kimley-Horn logo verification — check every sheet in the document for the presence of the Kimley-Horn logo in the title block. Flag any sheet where the Kimley-Horn logo is missing, incorrect, low resolution, or replaced with a different firm logo",
+    };
+    return`You are an expert MEP engineer performing a targeted QC review of engineering drawings.
+
+You are ONLY reviewing for the following selected categories:
+${cats.map((c,i)=>`${i+1}. ${catDescriptions[c.id]||c.label+" — "+c.desc}`).join("\n")}
+${cats.length+1}. Kimley-Horn logo verification — check every sheet for the Kimley-Horn logo in the title block. Flag any sheet where it is missing, incorrect, low resolution, or replaced with a different firm logo.
+
+Focus exclusively on these areas. Do not comment on anything outside these categories.
+IMPORTANT: Do NOT duplicate findings across categories. Each issue appears only once.
+
+Organize findings into these exact sections:
+CRITICAL ISSUES:
+[numbered list — must be corrected before issuing]
+MAJOR COMMENTS:
+[numbered list — significant items to address]
+MINOR COMMENTS:
+[numbered list — items that could be improved]
+RECOMMENDATIONS:
+[numbered list — suggestions to improve clarity or quality]
+
+Be specific about sheet numbers, detail references, and applicable code sections where visible.`;
+    }
+    return rt.system;
+  };
 
   const runReview=async()=>{
     if(!canRun)return;
@@ -256,6 +329,7 @@ function App(){
 
     const rt=activeReview;
     const userPrompt=(reviewType==="custom"?customPrompt.trim():rt.userPrompt)+projTxt+locTxt+phaseTxt+revTxt;
+    const systemPrompt=getSystemPrompt();
 
     // Build content array — for submittal, send both docs
     let content=[];
@@ -281,7 +355,7 @@ function App(){
         body:JSON.stringify({
           model:"claude-sonnet-4-20250514",
           max_tokens:3000,
-          system:rt.system,
+          system:systemPrompt,
           messages:[{role:"user",content}]
         })
       });
@@ -348,24 +422,7 @@ function App(){
             </div>
           </div>
 
-          {/* Design Phase */}
-          <div style={{borderTop:"1px solid "+C.border,paddingTop:18,marginBottom:18,opacity:showPhase?1:0.35,transition:"opacity 0.2s",pointerEvents:showPhase?"auto":"none"}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Design Phase</div>
-              {!showPhase&&<span style={{fontSize:10,color:C.light,fontStyle:"italic"}}>N/A for this review type</span>}
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
-              {PHASES.map(p=>{
-                const act=phase===p&&showPhase,hx=PHASE_COLORS[p];
-                return(
-                  <div key={p} onClick={()=>showPhase&&setPhase(p)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:7,border:"2px solid "+(act?hx:C.border),background:act?hx+"15":C.surface,cursor:showPhase?"pointer":"default",userSelect:"none"}}>
-                    <div style={{width:13,height:13,borderRadius:"50%",border:"2px solid "+(act?hx:C.border),background:act?hx:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:4,height:4,borderRadius:"50%",background:"white"}}/>}</div>
-                    <span style={{fontSize:12,fontWeight:act?700:400,color:act?hx:C.text}}>{p}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+
 
           {/* Review Type */}
           <div style={{borderTop:"1px solid "+C.border,paddingTop:18}}>
@@ -386,7 +443,34 @@ function App(){
               })}
             </div>
 
-            {reviewType==="custom"&&(
+            {reviewType==="partial"&&(
+              <div style={{marginTop:12,background:C.bg,borderRadius:8,padding:"12px 12px",border:"1px solid "+C.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Select Categories</div>
+                  <div style={{display:"flex",gap:4}}>
+                    <button onClick={()=>setPartialCats(PARTIAL_CATS.map(c=>c.id))} style={{padding:"2px 7px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>All</button>
+                    <button onClick={()=>setPartialCats([])} style={{padding:"2px 7px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>None</button>
+                  </div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                  {PARTIAL_CATS.map(cat=>{
+                    const act=partialCats.includes(cat.id);
+                    return(
+                      <div key={cat.id} onClick={()=>setPartialCats(p=>p.includes(cat.id)?p.filter(x=>x!==cat.id):[...p,cat.id])} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,border:"1.5px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
+                        <div style={{width:14,height:14,borderRadius:3,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<span style={{color:"white",fontSize:9,fontWeight:700}}>✓</span>}</div>
+                        <span style={{fontSize:11}}>{cat.icon}</span>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:act?600:400,color:act?C.accent:C.text}}>{cat.label}</div>
+                          <div style={{fontSize:10,color:C.light}}>{cat.desc}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {partialCats.length===0&&<div style={{fontSize:11,color:C.danger,marginTop:6}}>Select at least one category</div>}
+                {partialCats.length>0&&<div style={{fontSize:11,color:C.success,marginTop:6}}>✓ {partialCats.length} categor{partialCats.length===1?"y":"ies"} selected</div>}
+              </div>
+            )}
               <div style={{marginTop:12}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:5,display:"block",fontWeight:600}}>Your Review Prompt</label>
                 <textarea value={customPrompt} onChange={e=>setCustomPrompt(e.target.value)}
@@ -470,13 +554,15 @@ function App(){
               <div style={{width:44,height:44,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 18px"}}/>
               <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>
                 {reviewType==="submittal"?"Comparing submittal against reference document...":
-                 reviewType==="combined"?"Running comprehensive MEP QC review...":
+                 reviewType==="partial"?"Running partial QC review ("+partialCats.length+" categor"+(partialCats.length===1?"y":"ies")+")...":
+                 reviewType==="combined"?"Running full MEP QC review...":
                  reviewType==="proposal"?"Reviewing proposal...":
                  reviewType==="narrative"?"Reviewing report/narrative...":
                  "Running custom review..."}
               </div>
               <div style={{fontSize:12,color:C.muted}}>
                 {reviewType==="submittal"?`Analyzing ${fileName} against ${refFileName}`:
+                 reviewType==="partial"?PARTIAL_CATS.filter(c=>partialCats.includes(c.id)).map(c=>c.label).join(" · "):
                  "This may take 30–60 seconds for large documents"}
               </div>
             </div>

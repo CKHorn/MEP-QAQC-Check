@@ -266,6 +266,7 @@ function App(){
   const [loading,setLoading]=useState(false);
   const [results,setResults]=useState(null);
   const [error,setError]=useState("");
+  const [fileSize,setFileSize]=useState(0);
   const abortRef=useRef(null);
 
   const activeReview=REVIEW_TYPES.find(r=>r.id===reviewType);
@@ -358,7 +359,9 @@ Be specific about sheet numbers, detail references, and applicable code sections
     }
 
     try{
-      const resp=await fetch("/api/claude",{
+      // Race the fetch against a 90-second timeout
+      const timeoutPromise=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
+      const fetchPromise=fetch("/api/claude",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         signal:controller.signal,
@@ -369,12 +372,14 @@ Be specific about sheet numbers, detail references, and applicable code sections
           messages:[{role:"user",content}]
         })
       });
+      const resp=await Promise.race([fetchPromise,timeoutPromise]);
       const data=await resp.json();
       if(data.error){setError("API Error: "+data.error.message);setLoading(false);return;}
       const text=data.content?.map(i=>i.text||"").join("")||"No response received.";
       setResults({text,ts:new Date().toLocaleString(),fileName,refFileName:refFileName||null,projName,projLoc,reviewer,phase:showPhase?phase:null,reviewType,customPrompt});
     }catch(e){
-      if(e.name==="AbortError"){setError("Review cancelled.");} 
+      if(e.name==="AbortError"){setError("Review cancelled.");}
+      else if(e.message==="timeout"){setError("⏱ Request timed out — the server may be waking up from sleep. Please wait 15 seconds and try again.");}
       else{setError("Request failed: "+e.message);}
     }
     setLoading(false);
@@ -546,6 +551,17 @@ Be specific about sheet numbers, detail references, and applicable code sections
           {isSubmittal&&file&&!refFile&&(
             <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#92400E",display:"flex",alignItems:"center",gap:8}}>
               ⚠️ Please also upload the reference drawing or specification (Document 2) to run the comparison.
+            </div>
+          )}
+
+          {/* File size warning */}
+          {file&&fileSize>8*1024*1024&&(
+            <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#92400E",display:"flex",alignItems:"flex-start",gap:8}}>
+              <span style={{flexShrink:0}}>⚠️</span>
+              <div>
+                <strong>Large file detected ({(fileSize/1024/1024).toFixed(1)} MB)</strong> — Large PDFs may time out on the free server tier or exceed the AI context limit.
+                <div style={{marginTop:4}}>Try: splitting into fewer sheets, flattening layers in your PDF software, or reducing to the relevant sheets only.</div>
+              </div>
             </div>
           )}
 

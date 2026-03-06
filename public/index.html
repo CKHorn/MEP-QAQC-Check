@@ -266,6 +266,7 @@ function App(){
   const [loading,setLoading]=useState(false);
   const [results,setResults]=useState(null);
   const [error,setError]=useState("");
+  const abortRef=useRef(null);
 
   const activeReview=REVIEW_TYPES.find(r=>r.id===reviewType);
   const showPhase=activeReview?.usesPhase;
@@ -315,9 +316,17 @@ Be specific about sheet numbers, detail references, and applicable code sections
     return rt.system;
   };
 
+  const cancelReview=()=>{
+    if(abortRef.current)abortRef.current.abort();
+    setLoading(false);
+    setError("Review cancelled.");
+  };
+
   const runReview=async()=>{
     if(!canRun)return;
     setLoading(true);setResults(null);setError("");
+    const controller=new AbortController();
+    abortRef.current=controller;
 
     const b64=await toB64(file);
     const refB64=isSubmittal&&refFile?await toB64(refFile):null;
@@ -352,6 +361,7 @@ Be specific about sheet numbers, detail references, and applicable code sections
       const resp=await fetch("/api/claude",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
+        signal:controller.signal,
         body:JSON.stringify({
           model:"claude-sonnet-4-20250514",
           max_tokens:3000,
@@ -364,7 +374,8 @@ Be specific about sheet numbers, detail references, and applicable code sections
       const text=data.content?.map(i=>i.text||"").join("")||"No response received.";
       setResults({text,ts:new Date().toLocaleString(),fileName,refFileName:refFileName||null,projName,projLoc,reviewer,phase:showPhase?phase:null,reviewType,customPrompt});
     }catch(e){
-      setError("Request failed: "+e.message);
+      if(e.name==="AbortError"){setError("Review cancelled.");} 
+      else{setError("Request failed: "+e.message);}
     }
     setLoading(false);
   };
@@ -560,11 +571,14 @@ Be specific about sheet numbers, detail references, and applicable code sections
                  reviewType==="narrative"?"Reviewing report/narrative...":
                  "Running custom review..."}
               </div>
-              <div style={{fontSize:12,color:C.muted}}>
+              <div style={{fontSize:12,color:C.muted,marginBottom:20}}>
                 {reviewType==="submittal"?`Analyzing ${fileName} against ${refFileName}`:
                  reviewType==="partial"?PARTIAL_CATS.filter(c=>partialCats.includes(c.id)).map(c=>c.label).join(" · "):
                  "This may take 30–60 seconds for large documents"}
               </div>
+              <button onClick={cancelReview} style={{padding:"8px 20px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                ✕ Cancel Review
+              </button>
             </div>
           )}
 

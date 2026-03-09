@@ -20,163 +20,32 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#F7F8FA;color:#374151}
 const {useState,useRef}=React;
 const C={bg:"#F7F8FA",surface:"#fff",border:"#E2E6EA",accent:"#3B82F6",accentLight:"#EFF6FF",text:"#374151",muted:"#6B7280",light:"#9CA3AF",success:"#059669",warn:"#D97706",danger:"#DC2626"};
 
-const PHASES=["SD","50% DD","100% DD","50% CD","90% CD","100% IFC"];
-const PHASE_COLORS={"SD":"#7C3AED","50% DD":"#0891B2","100% DD":"#1D4ED8","50% CD":"#059669","90% CD":"#D97706","100% IFC":"#DC2626"};
-
 const PARTIAL_CATS=[
   {id:"code",label:"Code Compliance",icon:"📜",desc:"IMC, ASHRAE 62.1, 90.1, NFPA 90A, NEC, IBC"},
-  {id:"legibility",label:"Legibility & Presentation",icon:"🎨",desc:"Text overlap, font compliance, cluttered backgrounds, missing leaders"},
+  {id:"legibility",label:"Legibility & Presentation",icon:"🎨",desc:"Text overlap, font compliance, cluttered backgrounds"},
   {id:"coordination",label:"MEP Coordination",icon:"🔗",desc:"Discipline conflicts, missing coordination notes"},
   {id:"completeness",label:"Completeness",icon:"✅",desc:"Missing info, notes, schedules, details"},
   {id:"constructability",label:"Constructability",icon:"🏗️",desc:"Clearances, access, difficult installations"},
   {id:"energy",label:"Energy Compliance",icon:"⚡",desc:"ASHRAE 90.1, insulation, efficiencies, economizers"},
+];
 
+const DISCIPLINE_TYPES=[
+  {id:"mechanical",label:"Mechanical",icon:"💨",color:"#0891B2"},
+  {id:"electrical",label:"Electrical",icon:"⚡",color:"#D97706"},
+  {id:"plumbing",label:"Plumbing",icon:"💧",color:"#059669"},
+  {id:"structural",label:"Structural",icon:"🏗️",color:"#7C3AED"},
+  {id:"architectural",label:"Architectural",icon:"📐",color:"#DC2626"},
+  {id:"civil",label:"Civil",icon:"🌐",color:"#374151"},
 ];
 
 const REVIEW_TYPES=[
-  {
-    id:"partial",label:"Partial QC Review",icon:"🔎",usesPhase:true,isSubmittal:false,
-    desc:"Select specific review categories to check. Faster and more targeted than a full review.",
-    system:(cats)=>`You are an expert MEP engineer performing a targeted QC review of engineering drawings.
-
-You are ONLY reviewing for the following selected categories:
-${cats.map((c,i)=>`${i+1}. ${c.label} — ${c.desc}`).join("\n")}
-
-Focus exclusively on these areas. Do not comment on anything outside these categories.
-IMPORTANT: Do NOT duplicate findings across categories. Each issue appears only once.
-
-Organize findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list — must be corrected before issuing]
-MAJOR COMMENTS:
-[numbered list — significant items to address]
-MINOR COMMENTS:
-[numbered list — items that could be improved]
-RECOMMENDATIONS:
-[numbered list — suggestions to improve clarity or quality]
-
-Be specific about sheet numbers, detail references, and applicable code sections where visible.`,
-    userPrompt:"Please perform a targeted QC review of this drawing based on the selected categories."
-  },
-  {
-    id:"combined",label:"Full MEP QC Review",icon:"🔍",usesPhase:true,isSubmittal:false,
-    desc:"Comprehensive review covering all categories — general, code, MEP coordination, energy, constructability, and drawing presentation. Deduplicated into one report.",
-    system:`You are an expert MEP engineer performing a comprehensive QC review of engineering drawings.
-Your review must cover ALL of the following in a single unified pass:
-1. General completeness, missing information, errors, and inconsistencies
-2. Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments
-3. MEP coordination — conflicts between disciplines, missing coordination notes
-4. Energy compliance — ASHRAE 90.1, insulation, equipment efficiencies, controls, economizers
-5. Constructability — clearances, access, difficult installations, field coordination
-6. Drawing presentation — text overlapping, font compliance, cluttered backgrounds, missing leaders
-7. Kimley-Horn logo — verify the Kimley-Horn logo is present on every sheet in the title block. Flag any sheet where it is missing, incorrect, or replaced with a different firm logo.
-IMPORTANT: Do NOT duplicate findings. Each issue appears only once under the most relevant severity level.
-Organize findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list — must be corrected before issuing]
-MAJOR COMMENTS:
-[numbered list — significant items to address]
-MINOR COMMENTS:
-[numbered list — items that could be improved]
-RECOMMENDATIONS:
-[numbered list — suggestions to improve clarity or quality]
-Be specific about sheet numbers, detail references, and applicable code sections where visible.`,
-    userPrompt:"Please perform a comprehensive QC review of this drawing/document."
-  },
-  {
-    id:"submittal",label:"Submittal Review",icon:"📦",usesPhase:false,isSubmittal:true,
-    desc:"Upload a submittal and a reference drawing or specification. AI compares both and flags discrepancies, non-conformances, and missing data.",
-    system:`You are an expert MEP engineer performing a formal submittal review. You have been provided with two documents: Document 1 is the SUBMITTAL (product data, shop drawings, or equipment data) and Document 2 is the REFERENCE (contract drawings or project specifications).
-
-Compare the submittal against the reference document and check:
-1. Model numbers and product compliance — does the submitted product match what is specified?
-2. Performance data — capacity, efficiency, airflow, static pressure, electrical characteristics, etc.
-3. Physical dimensions and weights — do they match or fit within space constraints?
-4. Electrical requirements — voltage, phase, amperage, MCA, MOCP, disconnect size
-5. Accessories and options — are all specified accessories and features included?
-6. Submittal completeness — are all required data sheets, shop drawings, and certifications provided?
-7. Substitutions — if a substitution is proposed, is it clearly marked and is it truly equal?
-8. Installation and connection requirements — any conflicts with design intent?
-
-Be specific: where values differ, state "Submittal shows [X], contract documents require [Y]."
-
-Organize findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list — non-conformances requiring resubmittal or RFI before approval]
-MAJOR COMMENTS:
-[numbered list — significant discrepancies or missing required information]
-MINOR COMMENTS:
-[numbered list — minor discrepancies or items needing clarification]
-RECOMMENDATIONS:
-[numbered list — items to confirm with contractor or engineer of record]`,
-    userPrompt:"Document 1 is the SUBMITTAL. Document 2 is the REFERENCE DRAWING or SPECIFICATION. Please compare the submittal against the reference and identify all discrepancies, non-conformances, and missing information."
-  },
-  {
-    id:"proposal",label:"Proposal Review",icon:"📝",usesPhase:false,isSubmittal:false,
-    desc:"Reviews a proposal for scope clarity, completeness, fee adequacy, exclusions, assumptions, and risk items before submission.",
-    system:`You are an expert MEP engineering project manager reviewing a proposal document before submission to a client.
-Review the proposal for the following:
-1. Scope of work — is it clearly defined, complete, and unambiguous?
-2. Deliverables — are all deliverables clearly listed with enough detail?
-3. Exclusions — are key exclusions clearly stated to protect the firm?
-4. Assumptions — are assumptions reasonable and adequately documented?
-5. Fee and schedule — does the fee seem appropriate for the scope? Is the schedule realistic?
-6. Risk items — identify any scope gaps, unclear responsibilities, or items that could lead to disputes
-7. Client requirements — does the proposal address all apparent client requirements?
-8. Grammar, clarity, and professionalism — is the writing clear and professional?
-IMPORTANT: Do NOT duplicate findings.
-Organize findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list — must be addressed before submitting]
-MAJOR COMMENTS:
-[numbered list — significant items to revise]
-MINOR COMMENTS:
-[numbered list — items that could be improved]
-RECOMMENDATIONS:
-[numbered list — suggestions to strengthen the proposal]`,
-    userPrompt:"Please review this proposal document."
-  },
-  {
-    id:"narrative",label:"Report / Narrative Review",icon:"📄",usesPhase:false,isSubmittal:false,
-    desc:"Reviews basis of design narratives, engineering reports, and technical documents for accuracy, completeness, and clarity.",
-    system:`You are an expert MEP engineer reviewing a technical report, basis of design narrative, or engineering document.
-Review the document for:
-1. Technical accuracy — are engineering values, calculations, and references correct?
-2. Completeness — are all required topics covered?
-3. Code and standards references — are applicable codes correctly cited and current?
-4. Consistency — are values and system descriptions consistent throughout?
-5. Clarity — is the document clearly written and understandable?
-6. Supporting data — are assumptions and design criteria documented?
-7. Conclusions and recommendations — are they well-supported and clearly stated?
-8. Grammar, formatting, and professionalism
-IMPORTANT: Do NOT duplicate findings.
-Organize findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list — errors or omissions that must be corrected]
-MAJOR COMMENTS:
-[numbered list — significant items to address]
-MINOR COMMENTS:
-[numbered list — items that could be improved]
-RECOMMENDATIONS:
-[numbered list — suggestions to strengthen the document]`,
-    userPrompt:"Please review this technical report or narrative document."
-  },
-  {
-    id:"custom",label:"Custom Review",icon:"✏️",usesPhase:true,isSubmittal:false,
-    desc:"Write your own review prompt to focus on specific items, details, or concerns.",
-    system:`You are an expert MEP engineer performing a targeted QC review of engineering drawings or documents.
-Organize your findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list]
-MAJOR COMMENTS:
-[numbered list]
-MINOR COMMENTS:
-[numbered list]
-RECOMMENDATIONS:
-[numbered list]
-Be specific about sheet numbers and code sections where applicable.`,
-    userPrompt:""
-  },
+  {id:"partial",label:"Partial QC Review",icon:"🔎",isSubmittal:false,isCross:false,desc:"Select specific review categories. Faster and more targeted."},
+  {id:"combined",label:"Full MEP QC Review",icon:"🔍",isSubmittal:false,isCross:false,desc:"Comprehensive review covering all categories in one deduplicated report."},
+  {id:"submittal",label:"Submittal Review",icon:"📦",isSubmittal:true,isCross:false,desc:"Upload a submittal and reference drawing. AI compares both and flags discrepancies."},
+  {id:"cross",label:"Cross Discipline Review",icon:"🔀",isSubmittal:false,isCross:true,desc:"Upload drawings from multiple disciplines. AI compares them for coordination conflicts and inconsistencies."},
+  {id:"proposal",label:"Proposal Review",icon:"📝",isSubmittal:false,isCross:false,desc:"Reviews scope clarity, completeness, fee adequacy, exclusions, and risk items."},
+  {id:"narrative",label:"Report / Narrative Review",icon:"📄",isSubmittal:false,isCross:false,desc:"Reviews basis of design, engineering reports, and technical documents."},
+  {id:"custom",label:"Custom Review",icon:"✏️",isSubmittal:false,isCross:false,desc:"Write your own review prompt to focus on specific items or concerns."},
 ];
 
 const SEV=[
@@ -192,9 +61,8 @@ function parseFindings(text){
     const keys=SEV.map(s=>s.key).join("|");
     const regex=new RegExp(sev.key+"[:\\s]*(.*?)(?="+keys+"|$)","si");
     const match=text.match(regex);
-    if(match&&match[1].trim()&&!["none","n/a","—","-","none identified."].includes(match[1].trim().toLowerCase())){
+    if(match&&match[1].trim()&&!["none","n/a","—","-","none identified."].includes(match[1].trim().toLowerCase()))
       sections.push({...sev,content:match[1].trim()});
-    }
   });
   return sections.length?sections:[{key:"REVIEW",label:"Findings",icon:"📋",bg:"#F9FAFB",border:"#9CA3AF",color:"#374151",content:text}];
 }
@@ -213,35 +81,30 @@ function countFindings(text){
   return total;
 }
 
-// Reusable drag-and-drop file zone
-function FileZone({file,fileName,onFile,onRemove,loading,label,sublabel,accept,color}){
+function FileZone({file,fileName,onFile,onRemove,loading,label,sublabel,color,tag}){
   const [dragging,setDragging]=useState(false);
   const ref=useRef();
   const hd=e=>{e.preventDefault();e.stopPropagation();};
-  const borderColor=dragging?(color||C.accent):file?"#059669":C.border;
-  const bg=dragging?(color+"18"||(C.accentLight)):file?"#F0FDF4":C.surface;
   return(
-    <div
-      onDragEnter={e=>{hd(e);setDragging(true);}}
-      onDragLeave={e=>{hd(e);setDragging(false);}}
-      onDragOver={hd}
-      onDrop={e=>{hd(e);setDragging(false);const f=e.dataTransfer.files[0];if(f)onFile(f);}}
-      onClick={()=>!loading&&ref.current.click()}
-      style={{border:"2px dashed "+borderColor,borderRadius:10,background:bg,padding:"20px 16px",cursor:loading?"not-allowed":"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:8,transition:"all 0.15s",textAlign:"center"}}
-    >
-      <span style={{fontSize:32}}>{dragging?"📂":file?"✅":"📄"}</span>
-      <div>
-        <div style={{fontSize:13,fontWeight:600,color:file?"#059669":dragging?(color||C.accent):C.text,marginBottom:2}}>
-          {file?fileName:dragging?"Drop here":label}
-        </div>
-        {!file&&<div style={{fontSize:11,color:C.muted}}>{sublabel}</div>}
+    <div>
+      {tag&&<div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+        <span style={{width:18,height:18,borderRadius:"50%",background:color||C.accent,color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,flexShrink:0}}>{tag}</span>
+        {label}
+      </div>}
+      <div
+        onDragEnter={e=>{hd(e);setDragging(true);}}
+        onDragLeave={e=>{hd(e);setDragging(false);}}
+        onDragOver={hd}
+        onDrop={e=>{hd(e);setDragging(false);const f=e.dataTransfer.files[0];if(f)onFile(f);}}
+        onClick={()=>!loading&&ref.current.click()}
+        style={{border:"2px dashed "+(dragging?(color||C.accent):file?"#059669":C.border),borderRadius:10,background:dragging?(color+"18"||C.accentLight):file?"#F0FDF4":C.surface,padding:"16px",cursor:loading?"not-allowed":"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,transition:"all 0.15s",textAlign:"center"}}
+      >
+        <span style={{fontSize:28}}>{dragging?"📂":file?"✅":"📄"}</span>
+        <div style={{fontSize:12,fontWeight:600,color:file?"#059669":dragging?(color||C.accent):C.text}}>{file?fileName:dragging?"Drop here":tag?sublabel:"Drag & drop PDF or click to browse"}</div>
+        {!file&&!tag&&<div style={{fontSize:11,color:C.muted}}>{sublabel}</div>}
+        {file&&!loading&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{fontSize:11,color:C.danger,background:"none",border:"1px solid "+C.danger,borderRadius:5,padding:"2px 8px",cursor:"pointer"}}>Remove</button>}
+        <input ref={ref} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{if(e.target.files[0])onFile(e.target.files[0]);e.target.value="";}}/>
       </div>
-      {file&&!loading&&(
-        <button onClick={e=>{e.stopPropagation();onRemove();}} style={{fontSize:11,color:C.danger,background:"none",border:"1px solid "+C.danger,borderRadius:5,padding:"2px 8px",cursor:"pointer"}}>
-          Remove
-        </button>
-      )}
-      <input ref={ref} type="file" accept={accept||".pdf"} style={{display:"none"}} onChange={e=>{if(e.target.files[0])onFile(e.target.files[0]);e.target.value="";}}/>
     </div>
   );
 }
@@ -250,78 +113,124 @@ function App(){
   const [projName,setProjName]=useState("");
   const [projLoc,setProjLoc]=useState("");
   const [reviewer,setReviewer]=useState("");
-  const [phase,setPhase]=useState("50% CD");
   const [reviewType,setReviewType]=useState("partial");
   const [customPrompt,setCustomPrompt]=useState("");
   const [partialCats,setPartialCats]=useState(["code","legibility"]);
 
-  // Primary file (drawing / document / submittal)
+  // Primary file
   const [file,setFile]=useState(null);
   const [fileName,setFileName]=useState("");
+  const [fileSize,setFileSize]=useState(0);
 
-  // Secondary file (reference drawing/spec for submittal review)
+  // Submittal reference file
   const [refFile,setRefFile]=useState(null);
   const [refFileName,setRefFileName]=useState("");
+
+  // Cross discipline files — keyed by discipline id
+  const [crossFiles,setCrossFiles]=useState({});
 
   const [loading,setLoading]=useState(false);
   const [results,setResults]=useState(null);
   const [error,setError]=useState("");
-  const [fileSize,setFileSize]=useState(0);
   const abortRef=useRef(null);
 
   const activeReview=REVIEW_TYPES.find(r=>r.id===reviewType);
-  const showPhase=activeReview?.usesPhase;
   const isSubmittal=activeReview?.isSubmittal;
+  const isCross=activeReview?.isCross;
 
-  const handleFile=f=>{if(!f||f.type!=="application/pdf")return;setFile(f);setFileName(f.name);setResults(null);setError("");};
+  const handleFile=f=>{if(!f||f.type!=="application/pdf")return;setFile(f);setFileName(f.name);setFileSize(f.size);setResults(null);setError("");};
   const handleRefFile=f=>{if(!f||f.type!=="application/pdf")return;setRefFile(f);setRefFileName(f.name);setResults(null);setError("");};
+  const handleCrossFile=(discId,f)=>{if(!f||f.type!=="application/pdf")return;setCrossFiles(p=>({...p,[discId]:{file:f,name:f.name}}));setResults(null);setError("");};
+  const removeCrossFile=discId=>setCrossFiles(p=>{const n={...p};delete n[discId];return n;});
 
-  const canRun=file&&!loading&&(!isSubmittal||refFile)&&(reviewType!=="custom"||(customPrompt.trim().length>10))&&(reviewType!=="partial"||partialCats.length>0);
+  const crossCount=Object.keys(crossFiles).length;
+  const canRun=!loading&&
+    (isCross?crossCount>=2:file)&&
+    (!isSubmittal||refFile)&&
+    (reviewType!=="custom"||customPrompt.trim().length>10)&&
+    (reviewType!=="partial"||partialCats.length>0);
 
   const toB64=f=>new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result.split(",")[1]);rd.onerror=rej;rd.readAsDataURL(f);});
 
   const getSystemPrompt=()=>{
-    const rt=activeReview;
+    const catDescriptions={
+      code:"Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments",
+      legibility:"Legibility and drawing presentation — text overlapping linework, font compliance (Arial), inconsistent text sizes, missing leaders or callouts",
+      coordination:"MEP coordination — conflicts between disciplines, missing coordination notes",
+      completeness:"Completeness — missing information, incomplete notes, missing schedules, unreferenced details, blank fields",
+      constructability:"Constructability — missing clearances, difficult installations, access issues, maintenance access",
+      energy:"Energy compliance — ASHRAE 90.1, insulation, equipment efficiencies, controls, economizers",
+    };
     if(reviewType==="partial"){
       const selected=PARTIAL_CATS.filter(c=>partialCats.includes(c.id));
-      const catDescriptions={
-      code:"Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments",
-      legibility:"Legibility and drawing presentation — text overlapping linework, background patterns cluttering the drawing, font compliance (Arial), inconsistent text sizes, missing leaders or callouts",
-      coordination:"MEP coordination — conflicts between disciplines, missing coordination notes, unclear interfaces between electrical, plumbing, structural, and mechanical",
-      completeness:"Completeness — missing information, incomplete notes, missing schedules, unreferenced details, blank fields",
-      constructability:"Constructability — missing clearances, difficult installations, access issues, maintenance access, field coordination problems",
-      energy:"Energy compliance — ASHRAE 90.1, insulation requirements, equipment efficiencies, controls sequences, economizer requirements, energy recovery",
-      kh_logo:"Kimley-Horn logo verification — check every sheet in the document for the presence of the Kimley-Horn logo in the title block. Flag any sheet where the Kimley-Horn logo is missing, incorrect, low resolution, or replaced with a different firm logo",
-    };
-    return`You are an expert MEP engineer performing a targeted QC review of engineering drawings.
-
-You are ONLY reviewing for the following selected categories:
-${cats.map((c,i)=>`${i+1}. ${catDescriptions[c.id]||c.label+" — "+c.desc}`).join("\n")}
-${cats.length+1}. Kimley-Horn logo verification — check every sheet for the Kimley-Horn logo in the title block. Flag any sheet where it is missing, incorrect, low resolution, or replaced with a different firm logo.
-
-Focus exclusively on these areas. Do not comment on anything outside these categories.
-IMPORTANT: Do NOT duplicate findings across categories. Each issue appears only once.
-
-Organize findings into these exact sections:
-CRITICAL ISSUES:
-[numbered list — must be corrected before issuing]
-MAJOR COMMENTS:
-[numbered list — significant items to address]
-MINOR COMMENTS:
-[numbered list — items that could be improved]
-RECOMMENDATIONS:
-[numbered list — suggestions to improve clarity or quality]
-
-Be specific about sheet numbers, detail references, and applicable code sections where visible.`;
+      return`You are an expert MEP engineer performing a targeted QC review of engineering drawings.
+You are ONLY reviewing for these selected categories:
+${selected.map((c,i)=>`${i+1}. ${catDescriptions[c.id]||c.label}`).join("\n")}
+${selected.length+1}. Kimley-Horn logo verification — check every sheet for the Kimley-Horn logo in the title block. Flag any sheet where it is missing or incorrect.
+Focus exclusively on these areas. Do NOT duplicate findings.
+Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS
+Be specific about sheet numbers and code sections.`;
     }
-    return rt.system;
+    if(reviewType==="combined"){
+      return`You are an expert MEP engineer performing a comprehensive QC review of engineering drawings.
+Cover ALL of the following in one unified pass:
+1. General completeness, missing information, errors, inconsistencies
+2. Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, local amendments
+3. MEP coordination — conflicts between disciplines, missing coordination notes
+4. Energy compliance — ASHRAE 90.1, insulation, efficiencies, controls, economizers
+5. Constructability — clearances, access, difficult installations, field coordination
+6. Drawing presentation — text overlapping, font compliance, cluttered backgrounds
+7. Kimley-Horn logo — verify present on every sheet title block
+Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
+    }
+    if(reviewType==="submittal"){
+      return`You are an expert MEP engineer performing a formal submittal review. Document 1 is the SUBMITTAL, Document 2 is the REFERENCE (contract drawings or specifications).
+Compare and check:
+1. Model numbers and product compliance
+2. Performance data — capacity, efficiency, airflow, pressure, electrical characteristics
+3. Physical dimensions and weights
+4. Electrical requirements — voltage, phase, amperage, MCA, MOCP
+5. Accessories and options — all specified items included?
+6. Submittal completeness — all required data sheets and certifications provided?
+7. Substitutions — clearly marked and truly equal?
+8. Installation requirements — conflicts with design intent?
+State: "Submittal shows [X], contract documents require [Y]" where values differ.
+Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
+    }
+    if(reviewType==="cross"){
+      return`You are an expert MEP engineer performing a cross-discipline coordination review. You have been provided with drawings from multiple disciplines.
+Review ALL uploaded drawings together and identify:
+1. Spatial conflicts — where elements from different disciplines occupy the same space or interfere with each other
+2. Elevation conflicts — ceiling heights, beam depths, duct sizes, pipe sizes that conflict
+3. Inconsistent information — dimensions, elevations, or specifications that differ between discipline drawings
+4. Missing coordination — items shown on one discipline's drawings not accounted for on another's
+5. Structural penetrations — mechanical/electrical/plumbing elements requiring structural penetrations not shown on structural drawings
+6. Equipment coordination — equipment shown on one drawing not coordinated with supporting disciplines (electrical connections, structural support, plumbing connections)
+7. Grid and dimension alignment — column grids, room dimensions that don't align between disciplines
+8. Keynote and detail consistency — details referenced on one set that conflict with another
+For each finding clearly state WHICH disciplines are involved (e.g. "Mechanical vs Structural").
+Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS
+Be specific about sheet numbers and locations where visible.`;
+    }
+    if(reviewType==="proposal"){
+      return`You are an expert MEP engineering project manager reviewing a proposal before submission.
+Review for: scope clarity, deliverables, exclusions, assumptions, fee adequacy, schedule realism, risk items, client requirements, grammar and professionalism.
+Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
+    }
+    if(reviewType==="narrative"){
+      return`You are an expert MEP engineer reviewing a technical report or basis of design narrative.
+Review for: technical accuracy, completeness, code references, consistency, clarity, supporting data, conclusions, grammar and formatting.
+Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
+    }
+    if(reviewType==="custom"){
+      return`You are an expert MEP engineer performing a targeted QC review.
+Organize findings into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS
+Be specific about sheet numbers and code sections where applicable.`;
+    }
+    return"You are an expert MEP engineer. Organize findings into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS";
   };
 
-  const cancelReview=()=>{
-    if(abortRef.current)abortRef.current.abort();
-    setLoading(false);
-    setError("Review cancelled.");
-  };
+  const cancelReview=()=>{if(abortRef.current)abortRef.current.abort();setLoading(false);setError("Review cancelled.");};
 
   const runReview=async()=>{
     if(!canRun)return;
@@ -329,37 +238,45 @@ Be specific about sheet numbers, detail references, and applicable code sections
     const controller=new AbortController();
     abortRef.current=controller;
 
-    const b64=await toB64(file);
-    const refB64=isSubmittal&&refFile?await toB64(refFile):null;
-
-    const phaseTxt=showPhase?`\n\nDesign Phase: ${phase}\nFor each finding indicate when it should be resolved.`:"";
-    const locTxt=projLoc?`\nProject Location: ${projLoc} — apply local codes, climate zone, and jurisdiction-specific amendments.`:"";
+    const phaseTxt="";
+    const locTxt=projLoc?`\nProject Location: ${projLoc} — apply local codes, climate zone, and jurisdiction amendments.`:"";
     const projTxt=projName?`\nProject: ${projName}`:"";
     const revTxt=reviewer?`\nReviewer: ${reviewer}`:"";
 
-    const rt=activeReview;
-    const userPrompt=(reviewType==="custom"?customPrompt.trim():rt.userPrompt)+projTxt+locTxt+phaseTxt+revTxt;
-    const systemPrompt=getSystemPrompt();
-
-    // Build content array — for submittal, send both docs
-    let content=[];
-    if(isSubmittal&&refB64){
-      content=[
-        {type:"text",text:"DOCUMENT 1 — SUBMITTAL (the product data, shop drawing, or equipment submittal being reviewed):"},
-        {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-        {type:"text",text:"DOCUMENT 2 — REFERENCE (contract drawing or project specification to compare against):"},
-        {type:"document",source:{type:"base64",media_type:"application/pdf",data:refB64}},
-        {type:"text",text:userPrompt}
-      ];
-    } else {
-      content=[
-        {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-        {type:"text",text:userPrompt}
-      ];
-    }
+    let userPrompt,content;
 
     try{
-      // Race the fetch against a 90-second timeout
+      if(isCross){
+        // Build content with all discipline files labeled
+        const entries=Object.entries(crossFiles);
+        content=[];
+        for(const [discId,{file:f,name:n}] of entries){
+          const disc=DISCIPLINE_TYPES.find(d=>d.id===discId);
+          content.push({type:"text",text:`--- ${disc?.label||discId} DRAWINGS (${n}) ---`});
+          const b64=await toB64(f);
+          content.push({type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}});
+        }
+        userPrompt=`Please perform a cross-discipline coordination review of the ${entries.length} uploaded discipline drawings.${projTxt}${locTxt}${revTxt}`;
+        content.push({type:"text",text:userPrompt});
+      } else if(isSubmittal){
+        const b64=await toB64(file);
+        const refB64=await toB64(refFile);
+        content=[
+          {type:"text",text:"DOCUMENT 1 — SUBMITTAL:"},
+          {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
+          {type:"text",text:"DOCUMENT 2 — REFERENCE DRAWING / SPECIFICATION:"},
+          {type:"document",source:{type:"base64",media_type:"application/pdf",data:refB64}},
+          {type:"text",text:`Please compare the submittal against the reference.${projTxt}${locTxt}${revTxt}`}
+        ];
+      } else {
+        const b64=await toB64(file);
+        userPrompt=(reviewType==="custom"?customPrompt.trim():"Please perform a QC review of this document.")+projTxt+locTxt+phaseTxt+revTxt;
+        content=[
+          {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
+          {type:"text",text:userPrompt}
+        ];
+      }
+
       const timeoutPromise=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
       const fetchPromise=fetch("/api/claude",{
         method:"POST",
@@ -368,7 +285,7 @@ Be specific about sheet numbers, detail references, and applicable code sections
         body:JSON.stringify({
           model:"claude-sonnet-4-20250514",
           max_tokens:3000,
-          system:systemPrompt,
+          system:getSystemPrompt(),
           messages:[{role:"user",content}]
         })
       });
@@ -376,11 +293,11 @@ Be specific about sheet numbers, detail references, and applicable code sections
       const data=await resp.json();
       if(data.error){setError("API Error: "+data.error.message);setLoading(false);return;}
       const text=data.content?.map(i=>i.text||"").join("")||"No response received.";
-      setResults({text,ts:new Date().toLocaleString(),fileName,refFileName:refFileName||null,projName,projLoc,reviewer,phase:showPhase?phase:null,reviewType,customPrompt});
+      setResults({text,ts:new Date().toLocaleString(),fileName:isCross?null:fileName,refFileName:isSubmittal?refFileName:null,crossFiles:isCross?Object.entries(crossFiles).map(([id,v])=>({id,name:v.name})):null,projName,projLoc,reviewer,reviewType,customPrompt});
     }catch(e){
-      if(e.name==="AbortError"){setError("Review cancelled.");}
-      else if(e.message==="timeout"){setError("⏱ Request timed out — the server may be waking up from sleep. Please wait 15 seconds and try again.");}
-      else{setError("Request failed: "+e.message);}
+      if(e.name==="AbortError")setError("Review cancelled.");
+      else if(e.message==="timeout")setError("⏱ Request timed out — the server may be waking up. Wait 15 seconds and try again.");
+      else setError("Request failed: "+e.message);
     }
     setLoading(false);
   };
@@ -388,13 +305,12 @@ Be specific about sheet numbers, detail references, and applicable code sections
   const exportReport=()=>{
     if(!results)return;
     const rt=REVIEW_TYPES.find(r=>r.id===results.reviewType);
-    let txt=`MEP QC REVIEW REPORT\n${"=".repeat(60)}\n`;
-    txt+=`Project: ${results.projName||"---"}\nLocation: ${results.projLoc||"---"}\n`;
-    if(results.phase) txt+=`Phase: ${results.phase}\n`;
-    txt+=`File Reviewed: ${results.fileName}\n`;
-    if(results.refFileName) txt+=`Reference Document: ${results.refFileName}\n`;
+    let txt=`MEP QC REVIEW REPORT\n${"=".repeat(60)}\nProject: ${results.projName||"---"}\nLocation: ${results.projLoc||"---"}\n`;
+    if(results.fileName)txt+=`File: ${results.fileName}\n`;
+    if(results.refFileName)txt+=`Reference: ${results.refFileName}\n`;
+    if(results.crossFiles)txt+=`Disciplines: ${results.crossFiles.map(f=>f.name).join(", ")}\n`;
     txt+=`Reviewer: ${results.reviewer||"---"}\nReview Type: ${rt?.label}\nDate: ${results.ts}\n`;
-    if(results.reviewType==="custom") txt+=`Custom Prompt: ${results.customPrompt}\n`;
+    if(results.reviewType==="custom")txt+=`Prompt: ${results.customPrompt}\n`;
     txt+=`${"=".repeat(60)}\n\n${results.text}`;
     const a=document.createElement("a");
     a.href="data:text/plain;charset=utf-8,"+encodeURIComponent(txt);
@@ -403,249 +319,221 @@ Be specific about sheet numbers, detail references, and applicable code sections
   };
 
   const inp={width:"100%",padding:"8px 11px",border:"1px solid "+C.border,borderRadius:7,fontSize:13,color:C.text,background:C.surface,outline:"none"};
+  const sinp={...inp,padding:"6px 10px",fontSize:12};
 
   return(
-    <div style={{minHeight:"100vh",background:C.bg}}>
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
 
       {/* Header */}
-      <div style={{background:"#1E3A5F",padding:"18px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
-        <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:42,height:42,borderRadius:10,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🔍</div>
+      <div style={{background:"#1E3A5F",padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:38,height:38,borderRadius:9,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🔍</div>
           <div>
-            <div style={{fontSize:19,fontWeight:700,color:"#fff"}}>MEP QC Review</div>
-            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)",marginTop:1}}>AI-powered quality control for drawings, submittals, proposals, and reports</div>
+            <div style={{fontSize:17,fontWeight:700,color:"#fff"}}>MEP QC Review</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>AI-powered quality control for drawings, submittals, proposals, and reports</div>
           </div>
         </div>
-        {results&&(
-          <button onClick={exportReport} style={{padding:"8px 18px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>
-            📥 Export Report
-          </button>
-        )}
+        {results&&<button onClick={exportReport} style={{padding:"7px 16px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>📥 Export Report</button>}
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"300px 1fr",minHeight:"calc(100vh - 78px)"}}>
+      {/* ── TOP CONTROLS ── */}
+      <div style={{background:C.surface,borderBottom:"1px solid "+C.border,padding:"16px 24px",flexShrink:0}}>
 
-        {/* Sidebar */}
-        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"22px 18px",overflowY:"auto"}}>
-
-          {/* Project Info */}
-          <div style={{marginBottom:18}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Project Info</div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Name</label><input style={inp} value={projName} onChange={e=>setProjName(e.target.value)} placeholder="e.g. Main Street Office"/></div>
-              <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Location</label><input style={inp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
-              <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Reviewer Initials</label><input style={inp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
-            </div>
+        {/* Review Type row */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Review Type</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {REVIEW_TYPES.map(rt=>{
+              const act=reviewType===rt.id;
+              return(
+                <div key={rt.id} onClick={()=>{setReviewType(rt.id);setResults(null);setError("");}} style={{display:"flex",alignItems:"center",gap:7,padding:"8px 14px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
+                  <div style={{width:13,height:13,borderRadius:"50%",border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:4,height:4,borderRadius:"50%",background:"white"}}/>}</div>
+                  <span style={{fontSize:12}}>{rt.icon}</span>
+                  <span style={{fontSize:12,fontWeight:act?700:500,color:act?C.accent:C.text}}>{rt.label}</span>
+                </div>
+              );
+            })}
           </div>
+        </div>
 
-
-
-          {/* Review Type */}
-          <div style={{borderTop:"1px solid "+C.border,paddingTop:18}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Review Type</div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {REVIEW_TYPES.map(rt=>{
-                const act=reviewType===rt.id;
+        {/* Conditional controls row */}
+        {reviewType==="partial"&&(
+          <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",border:"1px solid "+C.border}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Select Categories</div>
+              <div style={{display:"flex",gap:4}}>
+                <button onClick={()=>setPartialCats(PARTIAL_CATS.map(c=>c.id))} style={{padding:"2px 8px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>All</button>
+                <button onClick={()=>setPartialCats([])} style={{padding:"2px 8px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>None</button>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              {PARTIAL_CATS.map(cat=>{
+                const act=partialCats.includes(cat.id);
                 return(
-                  <div key={rt.id} onClick={()=>{setReviewType(rt.id);setResults(null);}} style={{padding:"10px 12px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
-                      <div style={{width:14,height:14,borderRadius:"50%",border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:5,height:5,borderRadius:"50%",background:"white"}}/>}</div>
-                      <span style={{fontSize:12,fontWeight:act?700:500,color:act?C.accent:C.text}}>{rt.icon} {rt.label}</span>
-                      {!rt.usesPhase&&<span style={{fontSize:9,color:C.light,background:C.bg,border:"1px solid "+C.border,padding:"1px 5px",borderRadius:3,marginLeft:"auto",flexShrink:0}}>No Phase</span>}
-                    </div>
-                    <div style={{fontSize:11,color:C.muted,lineHeight:1.5,paddingLeft:22}}>{rt.desc}</div>
+                  <div key={cat.id} onClick={()=>setPartialCats(p=>p.includes(cat.id)?p.filter(x=>x!==cat.id):[...p,cat.id])} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"1.5px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
+                    <div style={{width:13,height:13,borderRadius:3,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<span style={{color:"white",fontSize:8,fontWeight:700}}>✓</span>}</div>
+                    <span style={{fontSize:11}}>{cat.icon} <span style={{fontWeight:act?600:400,color:act?C.accent:C.text}}>{cat.label}</span></span>
                   </div>
                 );
               })}
             </div>
+            {partialCats.length===0&&<div style={{fontSize:11,color:C.danger,marginTop:6}}>Select at least one category</div>}
+          </div>
+        )}
 
-            {reviewType==="partial"&&(
-              <div style={{marginTop:12,background:C.bg,borderRadius:8,padding:"12px 12px",border:"1px solid "+C.border}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Select Categories</div>
-                  <div style={{display:"flex",gap:4}}>
-                    <button onClick={()=>setPartialCats(PARTIAL_CATS.map(c=>c.id))} style={{padding:"2px 7px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>All</button>
-                    <button onClick={()=>setPartialCats([])} style={{padding:"2px 7px",fontSize:10,border:"1px solid "+C.border,borderRadius:4,background:C.surface,cursor:"pointer",color:C.muted}}>None</button>
+        {reviewType==="custom"&&(
+          <div>
+            <label style={{fontSize:11,color:C.muted,marginBottom:5,display:"block",fontWeight:600}}>Your Review Prompt</label>
+            <textarea value={customPrompt} onChange={e=>setCustomPrompt(e.target.value)}
+              placeholder="Describe what you want reviewed... e.g. Check all duct sizes against the schedule and flag any exceeding max velocity"
+              style={{...inp,height:80,resize:"vertical",fontSize:12,lineHeight:1.6}}/>
+            <div style={{fontSize:10,color:customPrompt.length<10?C.danger:C.success,marginTop:3}}>{customPrompt.length<10?"Enter at least 10 characters":"✓ Ready"}</div>
+          </div>
+        )}
+
+        {reviewType==="cross"&&(
+          <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",border:"1px solid "+C.border}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Select Disciplines to Compare</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {DISCIPLINE_TYPES.map(disc=>{
+                const hasFile=!!crossFiles[disc.id];
+                const act=hasFile;
+                return(
+                  <div key={disc.id} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"2px solid "+(act?disc.color:C.border),background:act?disc.color+"12":C.surface,fontSize:12}}>
+                    <span>{disc.icon}</span>
+                    <span style={{fontWeight:act?700:400,color:act?disc.color:C.text}}>{disc.label}</span>
+                    {hasFile&&<span style={{fontSize:10,color:disc.color,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {crossFiles[disc.id].name}</span>}
                   </div>
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                  {PARTIAL_CATS.map(cat=>{
-                    const act=partialCats.includes(cat.id);
-                    return(
-                      <div key={cat.id} onClick={()=>setPartialCats(p=>p.includes(cat.id)?p.filter(x=>x!==cat.id):[...p,cat.id])} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,border:"1.5px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
-                        <div style={{width:14,height:14,borderRadius:3,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<span style={{color:"white",fontSize:9,fontWeight:700}}>✓</span>}</div>
-                        <span style={{fontSize:11}}>{cat.icon}</span>
-                        <div>
-                          <div style={{fontSize:11,fontWeight:act?600:400,color:act?C.accent:C.text}}>{cat.label}</div>
-                          <div style={{fontSize:10,color:C.light}}>{cat.desc}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {partialCats.length===0&&<div style={{fontSize:11,color:C.danger,marginTop:6}}>Select at least one category</div>}
-                {partialCats.length>0&&<div style={{fontSize:11,color:C.success,marginTop:6}}>✓ {partialCats.length} categor{partialCats.length===1?"y":"ies"} selected</div>}
-              </div>
-            )}
-              <div style={{marginTop:12}}>
-                <label style={{fontSize:11,color:C.muted,marginBottom:5,display:"block",fontWeight:600}}>Your Review Prompt</label>
-                <textarea value={customPrompt} onChange={e=>setCustomPrompt(e.target.value)}
-                  placeholder={"Describe what you want reviewed...\n\nExamples:\n• Check duct sizes against the schedule\n• Verify equipment tags match the schedule\n• Review kitchen hood compliance with NFPA 96"}
-                  style={{...inp,height:140,resize:"vertical",fontSize:12,lineHeight:1.6}}/>
-                <div style={{fontSize:10,color:customPrompt.length<10?C.danger:C.success,marginTop:4}}>
-                  {customPrompt.length<10?"Enter at least 10 characters":"✓ Ready"}
-                </div>
-              </div>
-            )}
+                );
+              })}
+            </div>
+            {crossCount<2&&<div style={{fontSize:11,color:C.warn,marginTop:6}}>⚠ Upload at least 2 discipline PDFs below to run a cross-discipline review</div>}
+            {crossCount>=2&&<div style={{fontSize:11,color:C.success,marginTop:6}}>✓ {crossCount} disciplines ready to compare</div>}
+          </div>
+        )}
+
+      </div>
+
+      {/* ── MAIN LAYOUT ── */}
+      <div style={{display:"grid",gridTemplateColumns:"260px 1fr",flex:1,minHeight:0}}>
+
+        {/* Sidebar — project info only */}
+        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"20px 16px",overflowY:"auto"}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Project Info</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Name</label><input style={sinp} value={projName} onChange={e=>setProjName(e.target.value)} placeholder="e.g. Main Street Office"/></div>
+            <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Location</label><input style={sinp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
+            <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Reviewer Initials</label><input style={sinp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
+          </div>
+
+          {/* Review type description */}
+          <div style={{marginTop:20,padding:"12px",background:C.bg,borderRadius:8,border:"1px solid "+C.border}}>
+            <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:4}}>{activeReview?.icon} {activeReview?.label}</div>
+            <div style={{fontSize:11,color:C.muted,lineHeight:1.6}}>{activeReview?.desc}</div>
           </div>
         </div>
 
         {/* Main content */}
-        <div style={{padding:28,overflowY:"auto"}}>
+        <div style={{padding:24,overflowY:"auto"}}>
 
-          {/* Upload zone(s) */}
-          {isSubmittal?(
+          {/* Upload zones */}
+          {isCross?(
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Upload a PDF for each discipline you want to compare:</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:20}}>
+                {DISCIPLINE_TYPES.map(disc=>(
+                  <FileZone
+                    key={disc.id}
+                    file={crossFiles[disc.id]?.file||null}
+                    fileName={crossFiles[disc.id]?.name||""}
+                    onFile={f=>handleCrossFile(disc.id,f)}
+                    onRemove={()=>removeCrossFile(disc.id)}
+                    loading={loading}
+                    label={disc.label+" Drawings"}
+                    sublabel={"Drop "+disc.label.toLowerCase()+" PDF"}
+                    color={disc.color}
+                    tag={disc.icon}
+                  />
+                ))}
+              </div>
+            </div>
+          ):isSubmittal?(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
-              <div>
-                <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{width:20,height:20,borderRadius:"50%",background:C.accent,color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>1</span>
-                  Submittal PDF
-                </div>
-                <FileZone
-                  file={file} fileName={fileName}
-                  onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");setResults(null);}}
-                  loading={loading} color={C.accent}
-                  label="Drop submittal PDF here" sublabel="Product data, shop drawings, equipment submittals"
-                />
-              </div>
-              <div>
-                <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{width:20,height:20,borderRadius:"50%",background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>2</span>
-                  Reference Drawing or Spec PDF
-                </div>
-                <FileZone
-                  file={refFile} fileName={refFileName}
-                  onFile={handleRefFile} onRemove={()=>{setRefFile(null);setRefFileName("");setResults(null);}}
-                  loading={loading} color="#7C3AED"
-                  label="Drop reference PDF here" sublabel="Contract drawing or project specification to compare against"
-                />
-              </div>
+              <FileZone file={file} fileName={fileName} onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");}} loading={loading} label="① Submittal PDF" sublabel="Product data, shop drawings, equipment submittals" color={C.accent} tag="1"/>
+              <FileZone file={refFile} fileName={refFileName} onFile={handleRefFile} onRemove={()=>{setRefFile(null);setRefFileName("");}} loading={loading} label="② Reference Drawing / Spec" sublabel="Contract drawing or specification to compare against" color="#7C3AED" tag="2"/>
             </div>
           ):(
             <div style={{marginBottom:20}}>
               <FileZone
                 file={file} fileName={fileName}
                 onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");setResults(null);}}
-                loading={loading} color={C.accent}
+                loading={loading}
                 label="Drag & drop a PDF or click to browse"
-                sublabel={
-                  reviewType==="proposal"?"Accepts proposal PDFs — scope, fee, schedule, terms":
-                  reviewType==="narrative"?"Accepts basis of design, engineering reports, or narratives":
-                  "Accepts mechanical drawings, calculations, or specifications"
-                }
+                sublabel={reviewType==="proposal"?"Proposal PDFs — scope, fee, schedule, terms":reviewType==="narrative"?"Basis of design, engineering reports, or narratives":"Mechanical drawings, calculations, or specifications"}
               />
             </div>
           )}
 
-          {/* Submittal missing warning */}
-          {isSubmittal&&file&&!refFile&&(
-            <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#92400E",display:"flex",alignItems:"center",gap:8}}>
-              ⚠️ Please also upload the reference drawing or specification (Document 2) to run the comparison.
-            </div>
-          )}
-
-          {/* File size warning */}
-          {file&&fileSize>8*1024*1024&&(
-            <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#92400E",display:"flex",alignItems:"flex-start",gap:8}}>
-              <span style={{flexShrink:0}}>⚠️</span>
-              <div>
-                <strong>Large file detected ({(fileSize/1024/1024).toFixed(1)} MB)</strong> — Large PDFs may time out on the free server tier or exceed the AI context limit.
-                <div style={{marginTop:4}}>Try: splitting into fewer sheets, flattening layers in your PDF software, or reducing to the relevant sheets only.</div>
-              </div>
-            </div>
-          )}
-
-          {error&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:16,color:C.danger,fontSize:13}}>{error}</div>}
+          {/* Warnings */}
+          {isSubmittal&&file&&!refFile&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Upload the reference drawing or spec (Document 2) to run the comparison.</div>}
+          {file&&fileSize>8*1024*1024&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Large file ({(fileSize/1024/1024).toFixed(1)} MB) — try splitting into fewer sheets if it times out.</div>}
+          {error&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:14,color:C.danger,fontSize:13}}>{error}</div>}
 
           {/* Run button */}
-          {file&&!loading&&(
-            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"14px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:24,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          {(file||isCross)&&!loading&&(
+            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"13px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:22,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
               {activeReview?.icon} Run {activeReview?.label}
-              {showPhase&&<span style={{opacity:0.8,fontWeight:500,fontSize:13}}>— {phase}</span>}
             </button>
           )}
 
           {/* Loading */}
           {loading&&(
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:40,textAlign:"center",marginBottom:24}}>
-              <div style={{width:44,height:44,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 18px"}}/>
-              <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>
-                {reviewType==="submittal"?"Comparing submittal against reference document...":
-                 reviewType==="partial"?"Running partial QC review ("+partialCats.length+" categor"+(partialCats.length===1?"y":"ies")+")...":
-                 reviewType==="combined"?"Running full MEP QC review...":
-                 reviewType==="proposal"?"Reviewing proposal...":
-                 reviewType==="narrative"?"Reviewing report/narrative...":
-                 "Running custom review..."}
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:36,textAlign:"center",marginBottom:20}}>
+              <div style={{width:42,height:42,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/>
+              <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:5}}>
+                {reviewType==="cross"?`Comparing ${crossCount} discipline drawings...`:
+                 reviewType==="submittal"?"Comparing submittal against reference...":
+                 "Running "+activeReview?.label+"..."}
               </div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:20}}>
-                {reviewType==="submittal"?`Analyzing ${fileName} against ${refFileName}`:
-                 reviewType==="partial"?PARTIAL_CATS.filter(c=>partialCats.includes(c.id)).map(c=>c.label).join(" · "):
-                 "This may take 30–60 seconds for large documents"}
+              <div style={{fontSize:12,color:C.muted,marginBottom:18}}>
+                {reviewType==="cross"?DISCIPLINE_TYPES.filter(d=>crossFiles[d.id]).map(d=>d.label).join(" · "):
+                 "This may take 30–60 seconds"}
               </div>
-              <button onClick={cancelReview} style={{padding:"8px 20px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                ✕ Cancel Review
-              </button>
+              <button onClick={cancelReview} style={{padding:"7px 18px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>
             </div>
           )}
 
           {/* Results */}
           {results&&(
             <div style={{animation:"fadeIn 0.3s ease"}}>
-              <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
+              <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                 <div>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5,flexWrap:"wrap"}}>
-                    <div style={{fontSize:16,fontWeight:700,color:C.text}}>
-                      {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.icon} {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.label}
-                    </div>
-                    {results.phase&&(
-                      <span style={{fontSize:11,fontWeight:700,color:PHASE_COLORS[results.phase],background:PHASE_COLORS[results.phase]+"18",border:"1px solid "+PHASE_COLORS[results.phase],padding:"2px 8px",borderRadius:20}}>
-                        {results.phase}
-                      </span>
-                    )}
-                    <span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,border:"1px solid "+C.border,padding:"2px 8px",borderRadius:20}}>
-                      {countFindings(results.text)} findings
-                    </span>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
+                    <div style={{fontSize:15,fontWeight:700,color:C.text}}>{REVIEW_TYPES.find(r=>r.id===results.reviewType)?.icon} {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.label}</div>
+                    <span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,border:"1px solid "+C.border,padding:"2px 8px",borderRadius:20}}>{countFindings(results.text)} findings</span>
                   </div>
-                  <div style={{fontSize:12,color:C.muted}}>
-                    {results.reviewType==="submittal"?(
-                      <span><strong style={{color:C.accent}}>Submittal:</strong> {results.fileName} &nbsp;·&nbsp; <strong style={{color:"#7C3AED"}}>Reference:</strong> {results.refFileName}</span>
-                    ):results.fileName}
+                  <div style={{fontSize:11,color:C.muted}}>
+                    {results.crossFiles?results.crossFiles.map(f=>f.name).join(" · "):results.fileName}
+                    {results.refFileName&&" · Ref: "+results.refFileName}
                     {results.projName&&" · "+results.projName}
                     {results.projLoc&&" · "+results.projLoc}
                     {results.reviewer&&" · "+results.reviewer}
                     {" · "+results.ts}
                   </div>
                   {results.reviewType==="custom"&&results.customPrompt&&(
-                    <div style={{marginTop:6,fontSize:11,color:C.muted,background:C.accentLight,borderRadius:6,padding:"5px 10px",border:"1px solid #BFDBFE",maxWidth:600}}>
+                    <div style={{marginTop:5,fontSize:11,color:C.muted,background:C.accentLight,borderRadius:5,padding:"4px 9px",border:"1px solid #BFDBFE",maxWidth:560}}>
                       <strong style={{color:C.accent}}>Prompt:</strong> {results.customPrompt}
                     </div>
                   )}
                 </div>
-                <button onClick={exportReport} style={{padding:"7px 14px",background:"transparent",color:C.accent,border:"1px solid "+C.accent,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>
-                  📥 Export
-                </button>
+                <button onClick={exportReport} style={{padding:"6px 13px",background:"transparent",color:C.accent,border:"1px solid "+C.accent,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>📥 Export</button>
               </div>
-
               <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
-                <div style={{padding:"12px 18px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:600,color:C.text}}>
-                  Review Findings
-                </div>
-                <div style={{padding:16}}>
+                <div style={{padding:"11px 16px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:600,color:C.text}}>Review Findings</div>
+                <div style={{padding:14}}>
                   {parseFindings(results.text).map((sec,i)=>(
-                    <div key={i} style={{background:sec.bg,borderLeft:"4px solid "+sec.border,borderRadius:"0 8px 8px 0",padding:"14px 18px",marginBottom:12}}>
-                      <div style={{fontSize:13,fontWeight:700,color:sec.color,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
-                        <span>{sec.icon}</span>{sec.label}
-                      </div>
+                    <div key={i} style={{background:sec.bg,borderLeft:"4px solid "+sec.border,borderRadius:"0 8px 8px 0",padding:"13px 16px",marginBottom:10}}>
+                      <div style={{fontSize:13,fontWeight:700,color:sec.color,marginBottom:8,display:"flex",alignItems:"center",gap:6}}><span>{sec.icon}</span>{sec.label}</div>
                       <div style={{fontSize:12.5,color:C.text,lineHeight:1.85,whiteSpace:"pre-wrap"}}>{sec.content}</div>
                     </div>
                   ))}
@@ -655,19 +543,18 @@ Be specific about sheet numbers, detail references, and applicable code sections
           )}
 
           {/* Empty state */}
-          {!file&&!loading&&!results&&(
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:60,textAlign:"center"}}>
-              <div style={{fontSize:48,marginBottom:16}}>
-                {reviewType==="submittal"?"📦":reviewType==="proposal"?"📝":reviewType==="narrative"?"📄":reviewType==="custom"?"✏️":"🔍"}
-              </div>
-              <div style={{fontSize:16,fontWeight:600,marginBottom:8,color:C.muted}}>Ready for {activeReview?.label}</div>
-              <div style={{fontSize:13,maxWidth:480,margin:"0 auto",lineHeight:1.8,color:C.light}}>
-                {reviewType==="submittal"&&"Upload the submittal PDF and the reference drawing or specification. AI will compare both documents side-by-side and flag all discrepancies, non-conformances, and missing data."}
-                {reviewType==="combined"&&"Upload a mechanical drawing PDF for a comprehensive review covering all QC categories in one deduplicated report."}
-                {reviewType==="proposal"&&"Upload a proposal PDF to review scope clarity, exclusions, fee adequacy, assumptions, and risk items before submission."}
-                {reviewType==="narrative"&&"Upload a basis of design, engineering report, or technical narrative for a review of accuracy, completeness, and consistency."}
-                {reviewType==="custom"&&"Enter your review prompt in the sidebar, upload a PDF, and run a targeted review focused on exactly what you need."}
-              </div>
+          {!file&&!isCross&&!loading&&!results&&(
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:50,textAlign:"center"}}>
+              <div style={{fontSize:44,marginBottom:14}}>{activeReview?.icon}</div>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:6,color:C.muted}}>Ready for {activeReview?.label}</div>
+              <div style={{fontSize:12,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>{activeReview?.desc}</div>
+            </div>
+          )}
+          {isCross&&crossCount===0&&!loading&&!results&&(
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:50,textAlign:"center"}}>
+              <div style={{fontSize:44,marginBottom:14}}>🔀</div>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:6,color:C.muted}}>Cross Discipline Review</div>
+              <div style={{fontSize:12,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>Upload PDFs from at least 2 disciplines above. Claude will compare all drawings together and identify coordination conflicts, spatial clashes, and inconsistencies between disciplines.</div>
             </div>
           )}
         </div>

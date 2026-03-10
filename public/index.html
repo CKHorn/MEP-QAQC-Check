@@ -12,14 +12,17 @@
 body{font-family:'Segoe UI',Arial,sans-serif;background:#F7F8FA;color:#374151}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes dot{0%,80%,100%{opacity:.2}40%{opacity:1}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const {useState,useRef}=React;
+const {useState,useRef,useEffect}=React;
 const C={bg:"#F7F8FA",surface:"#fff",border:"#E2E6EA",accent:"#3B82F6",accentLight:"#EFF6FF",text:"#374151",muted:"#6B7280",light:"#9CA3AF",success:"#059669",warn:"#D97706",danger:"#DC2626"};
+const inp={width:"100%",padding:"8px 11px",border:"1px solid #E2E6EA",borderRadius:7,fontSize:13,color:"#374151",background:"#fff",outline:"none"};
 
+// ── Constants ─────────────────────────────────────────────
 const PARTIAL_CATS=[
   {id:"code",label:"Code Compliance",icon:"📜",desc:"IMC, ASHRAE 62.1, 90.1, NFPA 90A, NEC, IBC"},
   {id:"legibility",label:"Legibility & Presentation",icon:"🎨",desc:"Text overlap, font compliance, cluttered backgrounds"},
@@ -29,7 +32,7 @@ const PARTIAL_CATS=[
   {id:"energy",label:"Energy Compliance",icon:"⚡",desc:"ASHRAE 90.1, insulation, efficiencies, economizers"},
 ];
 
-const DISCIPLINE_TYPES=[
+const DISCIPLINES=[
   {id:"mechanical",label:"Mechanical",icon:"💨",color:"#0891B2"},
   {id:"electrical",label:"Electrical",icon:"⚡",color:"#D97706"},
   {id:"plumbing",label:"Plumbing",icon:"💧",color:"#059669"},
@@ -39,13 +42,14 @@ const DISCIPLINE_TYPES=[
 ];
 
 const REVIEW_TYPES=[
-  {id:"partial",label:"Partial QC Review",icon:"🔎",isSubmittal:false,isCross:false,desc:"Select specific review categories. Faster and more targeted."},
-  {id:"combined",label:"Full MEP QC Review",icon:"🔍",isSubmittal:false,isCross:false,desc:"Comprehensive review covering all categories in one deduplicated report."},
-  {id:"submittal",label:"Submittal Review",icon:"📦",isSubmittal:true,isCross:false,desc:"Upload a submittal and reference drawing. AI compares both and flags discrepancies."},
-  {id:"cross",label:"Cross Discipline Review",icon:"🔀",isSubmittal:false,isCross:true,desc:"Upload drawings from multiple disciplines. AI compares them for coordination conflicts."},
-  {id:"proposal",label:"Proposal Review",icon:"📝",isSubmittal:false,isCross:false,desc:"Reviews scope clarity, completeness, fee adequacy, exclusions, and risk items."},
-  {id:"narrative",label:"Report / Narrative Review",icon:"📄",isSubmittal:false,isCross:false,desc:"Reviews basis of design, engineering reports, and technical documents."},
-  {id:"custom",label:"Custom Review",icon:"✏️",isSubmittal:false,isCross:false,desc:"Write your own review prompt to focus on specific items or concerns."},
+  {id:"partial",label:"Partial QC Review",icon:"🔎",isSubmittal:false,isCross:false,isAgent:false,desc:"Select specific review categories. Faster and more targeted."},
+  {id:"combined",label:"Full MEP QC Review",icon:"🔍",isSubmittal:false,isCross:false,isAgent:false,desc:"Comprehensive review covering all categories in one deduplicated report."},
+  {id:"submittal",label:"Submittal Review",icon:"📦",isSubmittal:true,isCross:false,isAgent:false,desc:"Upload a submittal and reference drawing. AI compares both and flags discrepancies."},
+  {id:"cross",label:"Cross Discipline",icon:"🔀",isSubmittal:false,isCross:true,isAgent:false,desc:"Upload drawings from multiple disciplines. AI compares them for coordination conflicts."},
+  {id:"proposal",label:"Proposal Review",icon:"📝",isSubmittal:false,isCross:false,isAgent:false,desc:"Reviews scope clarity, completeness, fee adequacy, exclusions, and risk items."},
+  {id:"narrative",label:"Report / Narrative",icon:"📄",isSubmittal:false,isCross:false,isAgent:false,desc:"Reviews basis of design, engineering reports, and technical documents."},
+  {id:"custom",label:"Custom Review",icon:"✏️",isSubmittal:false,isCross:false,isAgent:false,desc:"Write your own review prompt to focus on specific items or concerns."},
+  {id:"agent",label:"MEP AI Agent",icon:"🤖",isSubmittal:false,isCross:false,isAgent:true,desc:"Chat with an MEP engineering AI. Upload PDFs or images and ask questions about drawings, code, or design."},
 ];
 
 const SEV=[
@@ -55,52 +59,46 @@ const SEV=[
   {key:"RECOMMENDATIONS",label:"Recommendations",icon:"💡",bg:"#F0FDF4",border:"#059669",color:"#059669"},
 ];
 
+// ── Helpers ───────────────────────────────────────────────
 function parseFindings(text){
-  const sections=[];
+  const out=[];
   SEV.forEach(sev=>{
-    const keys=SEV.map(s=>s.key).join("|");
-    const regex=new RegExp(sev.key+"[:\\s]*(.*?)(?="+keys+"|$)","si");
-    const match=text.match(regex);
-    if(match&&match[1].trim()&&!["none","n/a","—","-","none identified."].includes(match[1].trim().toLowerCase()))
-      sections.push({...sev,content:match[1].trim()});
+    const rx=new RegExp(sev.key+"[:\\s]*(.*?)(?="+SEV.map(s=>s.key).join("|")+"|$)","si");
+    const m=text.match(rx);
+    if(m&&m[1].trim()&&!["none","n/a","—","-","none identified."].includes(m[1].trim().toLowerCase()))
+      out.push({...sev,content:m[1].trim()});
   });
-  return sections.length?sections:[{key:"REVIEW",label:"Findings",icon:"📋",bg:"#F9FAFB",border:"#9CA3AF",color:"#374151",content:text}];
+  return out.length?out:[{key:"R",label:"Findings",icon:"📋",bg:"#F9FAFB",border:"#9CA3AF",color:"#374151",content:text}];
 }
 
 function countFindings(text){
-  let total=0;
+  let n=0;
   SEV.forEach(sev=>{
-    const keys=SEV.map(s=>s.key).join("|");
-    const regex=new RegExp(sev.key+"[:\\s]*(.*?)(?="+keys+"|$)","si");
-    const match=text.match(regex);
-    if(match&&match[1]){
-      const items=match[1].trim().split(/\n(?=\d+\.)/);
-      total+=items.filter(i=>i.trim().length>2).length;
-    }
+    const rx=new RegExp(sev.key+"[:\\s]*(.*?)(?="+SEV.map(s=>s.key).join("|")+"|$)","si");
+    const m=text.match(rx);
+    if(m&&m[1]) n+=m[1].trim().split(/\n(?=\d+\.)/).filter(i=>i.trim().length>2).length;
   });
-  return total;
+  return n;
 }
 
+const toB64=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(f);});
+
+// ── FileZone ──────────────────────────────────────────────
 function FileZone({file,fileName,onFile,onRemove,loading,label,sublabel,color,tag}){
-  const [dragging,setDragging]=useState(false);
+  const [drag,setDrag]=useState(false);
   const ref=useRef();
   const hd=e=>{e.preventDefault();e.stopPropagation();};
   return(
     <div>
-      {tag&&<div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
-        <span style={{width:18,height:18,borderRadius:"50%",background:color||C.accent,color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,flexShrink:0}}>{tag}</span>
-        {label}
+      {tag&&<div style={{fontSize:11,fontWeight:700,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+        <span style={{width:18,height:18,borderRadius:"50%",background:color||C.accent,color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10}}>{tag}</span>{label}
       </div>}
-      <div
-        onDragEnter={e=>{hd(e);setDragging(true);}}
-        onDragLeave={e=>{hd(e);setDragging(false);}}
-        onDragOver={hd}
-        onDrop={e=>{hd(e);setDragging(false);const f=e.dataTransfer.files[0];if(f)onFile(f);}}
+      <div onDragEnter={e=>{hd(e);setDrag(true);}} onDragLeave={e=>{hd(e);setDrag(false);}} onDragOver={hd}
+        onDrop={e=>{hd(e);setDrag(false);const f=e.dataTransfer.files[0];if(f)onFile(f);}}
         onClick={()=>!loading&&ref.current.click()}
-        style={{border:"2px dashed "+(dragging?(color||C.accent):file?"#059669":C.border),borderRadius:10,background:dragging?(color+"18"||C.accentLight):file?"#F0FDF4":C.surface,padding:"16px",cursor:loading?"not-allowed":"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,transition:"all 0.15s",textAlign:"center"}}
-      >
-        <span style={{fontSize:28}}>{dragging?"📂":file?"✅":"📄"}</span>
-        <div style={{fontSize:12,fontWeight:600,color:file?"#059669":dragging?(color||C.accent):C.text}}>{file?fileName:dragging?"Drop here":tag?sublabel:"Drag & drop PDF or click to browse"}</div>
+        style={{border:"2px dashed "+(drag?(color||C.accent):file?"#059669":C.border),borderRadius:10,background:drag?"#EFF6FF":file?"#F0FDF4":C.surface,padding:16,cursor:loading?"not-allowed":"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,textAlign:"center"}}>
+        <span style={{fontSize:28}}>{drag?"📂":file?"✅":"📄"}</span>
+        <div style={{fontSize:12,fontWeight:600,color:file?"#059669":drag?(color||C.accent):C.text}}>{file?fileName:drag?"Drop here":tag?sublabel:"Drag & drop PDF or click to browse"}</div>
         {!file&&!tag&&<div style={{fontSize:11,color:C.muted}}>{sublabel}</div>}
         {file&&!loading&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{fontSize:11,color:C.danger,background:"none",border:"1px solid "+C.danger,borderRadius:5,padding:"2px 8px",cursor:"pointer"}}>Remove</button>}
         <input ref={ref} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{if(e.target.files[0])onFile(e.target.files[0]);e.target.value="";}}/>
@@ -109,8 +107,192 @@ function FileZone({file,fileName,onFile,onRemove,loading,label,sublabel,color,ta
   );
 }
 
+// ── MEP AI Agent ──────────────────────────────────────────
+function MEPAgent(){
+  const [msgs,setMsgs]=useState([{role:"assistant",text:"Hi! I'm your MEP engineering AI assistant. Ask me anything about HVAC, electrical, plumbing, code compliance, or upload a drawing or photo and I'll help you analyze it.",files:[]}]);
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [attachments,setAttachments]=useState([]);
+  const [drag,setDrag]=useState(false);
+  const bottomRef=useRef();
+  const fileRef=useRef();
+  const inputRef=useRef();
+
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[msgs,loading]);
+
+  const hd=e=>{e.preventDefault();e.stopPropagation();};
+
+  const addFile=async f=>{
+    if(!f)return;
+    const isPdf=f.type==="application/pdf";
+    const isImg=f.type.startsWith("image/");
+    if(!isPdf&&!isImg){alert("Please upload a PDF or image.");return;}
+    const b64=await toB64(f);
+    setAttachments(p=>[...p,{isPdf,b64,mediaType:f.type,name:f.name}]);
+  };
+
+  const send=async()=>{
+    const text=input.trim();
+    if((!text&&!attachments.length)||loading)return;
+    setInput("");
+    const atts=[...attachments];
+    setAttachments([]);
+
+    // Build content for this turn
+    const userContent=[];
+    atts.forEach(a=>{
+      if(a.isPdf) userContent.push({type:"document",source:{type:"base64",media_type:"application/pdf",data:a.b64}});
+      else userContent.push({type:"image",source:{type:"base64",media_type:a.mediaType,data:a.b64}});
+    });
+    if(text) userContent.push({type:"text",text});
+
+    const newMsgs=[...msgs,{role:"user",text,files:atts,content:userContent}];
+    setMsgs(newMsgs);
+    setLoading(true);
+
+    try{
+      // Build API message array
+      const apiMsgs=newMsgs.map(m=>{
+        if(m.role==="assistant") return{role:"assistant",content:m.text};
+        return{role:"user",content:m.content||[{type:"text",text:m.text}]};
+      });
+
+      const resp=await fetch("/api/claude",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:2000,
+          system:"You are an expert MEP (Mechanical, Electrical, Plumbing) engineering assistant at Kimley-Horn with deep knowledge of HVAC systems, electrical systems, plumbing design, fire protection, building codes (IMC, NEC, IBC, NFPA), ASHRAE standards, and engineering calculations. When reviewing drawings or photos, be specific and provide actionable feedback. Keep responses clear and practical.",
+          messages:apiMsgs
+        })
+      });
+      const data=await resp.json();
+      const reply=data.error?"Error: "+data.error.message:(data.content?.map(i=>i.text||"").join("")||"No response.");
+      setMsgs(p=>[...p,{role:"assistant",text:reply,files:[]}]);
+    }catch(e){
+      setMsgs(p=>[...p,{role:"assistant",text:"Connection error: "+e.message,files:[]}]);
+    }
+    setLoading(false);
+    setTimeout(()=>inputRef.current?.focus(),100);
+  };
+
+  const quickPrompts=["Min OA CFM for open office?","When is economizer required per 90.1?","How do I size a chilled water pump?","Fire damper requirements NFPA 90A?","Equal friction duct sizing method?"];
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)",minHeight:480,background:C.surface,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+      {/* Header */}
+      <div style={{padding:"12px 18px",background:"#1E3A5F",display:"flex",alignItems:"center",gap:10}}>
+        <div style={{width:34,height:34,borderRadius:8,background:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>MEP AI Agent</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Ask anything · Upload drawings or photos</div>
+        </div>
+        <button onClick={()=>setMsgs([{role:"assistant",text:"Hi! I'm your MEP engineering AI. Ask me anything or upload a drawing or photo.",files:[]}])} style={{marginLeft:"auto",background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.3)",borderRadius:6,padding:"4px 10px",color:"#fff",fontSize:11,cursor:"pointer"}}>Clear</button>
+      </div>
+
+      {/* Messages */}
+      <div style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
+        {msgs.map((m,i)=>(
+          <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",flexDirection:m.role==="user"?"row-reverse":"row"}}>
+            <div style={{width:30,height:30,borderRadius:8,background:m.role==="user"?C.accent:"#1E3A5F",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#fff",fontWeight:700,fontSize:13}}>
+              {m.role==="user"?"U":"🤖"}
+            </div>
+            <div style={{maxWidth:"80%",display:"flex",flexDirection:"column",gap:5,alignItems:m.role==="user"?"flex-end":"flex-start"}}>
+              {m.files?.length>0&&(
+                <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                  {m.files.map((f,fi)=>(
+                    <div key={fi} style={{background:m.role==="user"?"#1D4ED8":"#F0F2F5",borderRadius:5,padding:"3px 9px",fontSize:11,color:m.role==="user"?"#fff":C.text,display:"flex",alignItems:"center",gap:4}}>
+                      {f.isPdf?"📄":"🖼️"} {f.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(m.text)&&(
+                <div style={{padding:"10px 14px",borderRadius:m.role==="user"?"12px 4px 12px 12px":"4px 12px 12px 12px",background:m.role==="user"?C.accent:C.bg,color:m.role==="user"?"#fff":C.text,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>
+                  {m.text}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {loading&&(
+          <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+            <div style={{width:30,height:30,borderRadius:8,background:"#1E3A5F",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🤖</div>
+            <div style={{padding:"12px 16px",borderRadius:"4px 12px 12px 12px",background:C.bg,display:"flex",gap:4,alignItems:"center"}}>
+              {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:C.accent,animation:`dot 1.2s ease-in-out ${i*0.2}s infinite`}}/>)}
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Quick prompts */}
+      {msgs.length<=1&&(
+        <div style={{padding:"6px 18px 4px",display:"flex",gap:6,flexWrap:"wrap"}}>
+          {quickPrompts.map((q,i)=>(
+            <button key={i} onClick={()=>{setInput(q);inputRef.current?.focus();}} style={{padding:"4px 10px",borderRadius:20,border:"1px solid "+C.border,background:C.surface,color:C.muted,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>{q}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Attachment chips */}
+      {attachments.length>0&&(
+        <div style={{padding:"6px 18px 2px",display:"flex",gap:7,flexWrap:"wrap"}}>
+          {attachments.map((a,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:5,background:C.accentLight,border:"1px solid #BFDBFE",borderRadius:6,padding:"3px 10px",fontSize:12}}>
+              {a.isPdf?"📄":"🖼️"}<span style={{color:C.accent,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span>
+              <button onClick={()=>setAttachments(p=>p.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:15,lineHeight:1}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <div onDragEnter={e=>{hd(e);setDrag(true);}} onDragLeave={e=>{hd(e);setDrag(false);}} onDragOver={hd}
+        onDrop={e=>{hd(e);setDrag(false);addFile(e.dataTransfer.files[0]);}}
+        style={{padding:"10px 18px 14px",borderTop:"1px solid "+(drag?C.accent:C.border),background:drag?C.accentLight:C.surface,transition:"all 0.15s"}}>
+        {drag&&<div style={{textAlign:"center",fontSize:12,color:C.accent,fontWeight:600,marginBottom:6}}>📎 Drop PDF or image to attach</div>}
+        <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+          <button onClick={()=>fileRef.current.click()} title="Attach PDF or image" style={{width:34,height:34,borderRadius:8,border:"1px solid "+C.border,background:C.surface,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>📎</button>
+          <input ref={fileRef} type="file" accept=".pdf,image/*" style={{display:"none"}} onChange={e=>{if(e.target.files[0])addFile(e.target.files[0]);e.target.value="";}}/>
+          <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
+            placeholder="Ask anything about MEP engineering... (Enter to send, Shift+Enter for new line)"
+            style={{...inp,flex:1,height:40,minHeight:40,maxHeight:120,resize:"none",lineHeight:1.5,padding:"9px 11px"}}/>
+          <button onClick={send} disabled={loading||(!input.trim()&&!attachments.length)}
+            style={{width:34,height:34,borderRadius:8,background:loading||(!input.trim()&&!attachments.length)?"#9CA3AF":C.accent,color:"#fff",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:16}}>➤</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── System prompt builder ─────────────────────────────────
+function buildSystem(reviewType,partialCats){
+  const footer="\nDo NOT duplicate findings. Organize into:\nCRITICAL ISSUES:\nMAJOR COMMENTS:\nMINOR COMMENTS:\nRECOMMENDATIONS:\nBe specific about sheet numbers and code sections.";
+  const catDesc={
+    code:"Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, local amendments",
+    legibility:"Legibility and presentation — text overlapping, font compliance (Arial), missing leaders",
+    coordination:"MEP coordination — conflicts between disciplines, missing coordination notes",
+    completeness:"Completeness — missing info, notes, schedules, unreferenced details",
+    constructability:"Constructability — missing clearances, access issues, difficult installations",
+    energy:"Energy compliance — ASHRAE 90.1, insulation, efficiencies, controls, economizers",
+  };
+  if(reviewType==="partial"){
+    const sel=PARTIAL_CATS.filter(c=>partialCats.includes(c.id));
+    return"You are an expert MEP engineer performing a targeted QC review.\nOnly review for:\n"+sel.map((c,i)=>`${i+1}. ${catDesc[c.id]}`).join("\n")+`\n${sel.length+1}. Kimley-Horn logo — verify present on every sheet title block.`+footer;
+  }
+  if(reviewType==="combined") return"You are an expert MEP engineer performing a comprehensive QC review covering completeness, code compliance (IMC, ASHRAE 62.1/90.1, NFPA 90A, NEC, IBC), MEP coordination, energy compliance, constructability, drawing presentation, and Kimley-Horn logo on all sheets."+footer;
+  if(reviewType==="submittal") return"You are an expert MEP engineer performing a formal submittal review. Document 1 is the SUBMITTAL, Document 2 is the REFERENCE. Compare model numbers, performance data, dimensions, electrical requirements, accessories, completeness, and substitutions. State 'Submittal shows [X], contract requires [Y]' where values differ."+footer;
+  if(reviewType==="cross") return"You are an expert MEP engineer performing a cross-discipline coordination review. Identify spatial conflicts, elevation conflicts, inconsistent info between disciplines, missing coordination, structural penetrations, and equipment coordination gaps. For each finding state which disciplines are involved."+footer;
+  if(reviewType==="proposal") return"You are an expert MEP engineering project manager reviewing a proposal before submission. Review for scope clarity, deliverables, exclusions, assumptions, fee adequacy, schedule realism, risk items, and professionalism."+footer;
+  if(reviewType==="narrative") return"You are an expert MEP engineer reviewing a technical report or basis of design narrative. Review for technical accuracy, completeness, code references, consistency, clarity, and supporting data."+footer;
+  return"You are an expert MEP engineer performing a targeted QC review."+footer;
+}
+
+// ── Main App ──────────────────────────────────────────────
 function App(){
-  // ── State ─────────────────────────────────────────────
   const [projName,setProjName]=useState("");
   const [projLoc,setProjLoc]=useState("");
   const [reviewer,setReviewer]=useState("");
@@ -129,16 +311,17 @@ function App(){
   const [storedContent,setStoredContent]=useState(null);
   const [feedback,setFeedback]=useState("");
   const [feedbackLoading,setFeedbackLoading]=useState(false);
-  const abortRef=useRef(null);
+  const abortRef=useRef(false);
 
-  const activeReview=REVIEW_TYPES.find(r=>r.id===reviewType);
-  const isSubmittal=activeReview?.isSubmittal;
-  const isCross=activeReview?.isCross;
+  const activeRT=REVIEW_TYPES.find(r=>r.id===reviewType);
+  const isSubmittal=activeRT?.isSubmittal;
+  const isCross=activeRT?.isCross;
+  const isAgent=activeRT?.isAgent;
   const crossCount=Object.keys(crossFiles).length;
 
   const handleFile=f=>{if(!f||f.type!=="application/pdf")return;setFile(f);setFileName(f.name);setFileSize(f.size);setResults(null);setError("");setStoredContent(null);};
-  const handleRefFile=f=>{if(!f||f.type!=="application/pdf")return;setRefFile(f);setRefFileName(f.name);setResults(null);setError("");};
-  const handleCrossFile=(id,f)=>{if(!f||f.type!=="application/pdf")return;setCrossFiles(p=>({...p,[id]:{file:f,name:f.name}}));setResults(null);setError("");};
+  const handleRefFile=f=>{if(!f||f.type!=="application/pdf")return;setRefFile(f);setRefFileName(f.name);};
+  const handleCrossFile=(id,f)=>{if(!f||f.type!=="application/pdf")return;setCrossFiles(p=>({...p,[id]:{file:f,name:f.name}}));};
   const removeCrossFile=id=>setCrossFiles(p=>{const n={...p};delete n[id];return n;});
 
   const canRun=!loading&&
@@ -147,156 +330,93 @@ function App(){
     (reviewType!=="custom"||customPrompt.trim().length>10)&&
     (reviewType!=="partial"||partialCats.length>0);
 
-  const toB64=f=>new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result.split(",")[1]);rd.onerror=rej;rd.readAsDataURL(f);});
+  const cancel=()=>{abortRef.current=true;setLoading(false);setFeedbackLoading(false);setError("Review cancelled.");};
 
-  // ── System prompt ─────────────────────────────────────
-  const getSystemPrompt=()=>{
-    const catDesc={
-      code:"Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments",
-      legibility:"Legibility and presentation — text overlapping linework, font compliance (Arial), inconsistent text sizes, missing leaders",
-      coordination:"MEP coordination — conflicts between disciplines, missing coordination notes",
-      completeness:"Completeness — missing information, incomplete notes, missing schedules, unreferenced details",
-      constructability:"Constructability — missing clearances, difficult installations, access issues, maintenance access",
-      energy:"Energy compliance — ASHRAE 90.1, insulation, equipment efficiencies, controls, economizers",
-    };
-    const footer=`\nDo NOT duplicate findings. Organize into exactly these sections:\nCRITICAL ISSUES:\nMAJOR COMMENTS:\nMINOR COMMENTS:\nRECOMMENDATIONS:\nBe specific about sheet numbers and code sections where visible.`;
-    if(reviewType==="partial"){
-      const sel=PARTIAL_CATS.filter(c=>partialCats.includes(c.id));
-      return`You are an expert MEP engineer performing a targeted QC review.\nOnly review for:\n${sel.map((c,i)=>`${i+1}. ${catDesc[c.id]}`).join("\n")}\n${sel.length+1}. Kimley-Horn logo — verify present on every sheet title block. Flag any sheet missing it.`+footer;
-    }
-    if(reviewType==="combined") return`You are an expert MEP engineer performing a comprehensive QC review covering: completeness, code compliance (IMC, ASHRAE 62.1/90.1, NFPA 90A, NEC, IBC), MEP coordination, energy compliance, constructability, drawing presentation, and Kimley-Horn logo on all sheets.`+footer;
-    if(reviewType==="submittal") return`You are an expert MEP engineer performing a formal submittal review. Document 1 is the SUBMITTAL, Document 2 is the REFERENCE. Compare model numbers, performance data, dimensions, electrical requirements, accessories, completeness, and substitutions. State "Submittal shows [X], contract requires [Y]" where values differ.`+footer;
-    if(reviewType==="cross") return`You are an expert MEP engineer performing a cross-discipline coordination review across multiple discipline drawings. Identify: spatial conflicts, elevation conflicts, inconsistent information between disciplines, missing coordination, structural penetrations, equipment coordination gaps, and grid/dimension misalignment. For each finding state which disciplines are involved.`+footer;
-    if(reviewType==="proposal") return`You are an expert MEP engineering project manager reviewing a proposal before submission. Review for scope clarity, deliverables, exclusions, assumptions, fee adequacy, schedule realism, risk items, and professionalism.`+footer;
-    if(reviewType==="narrative") return`You are an expert MEP engineer reviewing a technical report or basis of design narrative. Review for technical accuracy, completeness, code references, consistency, clarity, and supporting data.`+footer;
-    return`You are an expert MEP engineer performing a targeted QC review.`+footer;
-  };
-
-  // ── Cancel ────────────────────────────────────────────
-  const cancelReview=()=>{
-    if(abortRef.current)abortRef.current.abort();
-    setLoading(false);
-    setFeedbackLoading(false);
-    setError("Review cancelled.");
-  };
-
-  // ── Run review ────────────────────────────────────────
   const runReview=async()=>{
     if(!canRun)return;
     setLoading(true);setResults(null);setError("");setFeedback("");
     abortRef.current=false;
-    const locTxt=projLoc?`\nProject Location: ${projLoc}`:"";
-    const projTxt=projName?`\nProject: ${projName}`:"";
-    const revTxt=reviewer?`\nReviewer: ${reviewer}`:"";
+    const loc=projLoc?"\nProject Location: "+projLoc:"";
+    const proj=projName?"\nProject: "+projName:"";
+    const rev=reviewer?"\nReviewer: "+reviewer:"";
     let content=[];
     try{
       if(isCross){
         for(const [id,{file:f,name:n}] of Object.entries(crossFiles)){
-          const disc=DISCIPLINE_TYPES.find(d=>d.id===id);
-          content.push({type:"text",text:`--- ${disc?.label||id} DRAWINGS (${n}) ---`});
-          const b64=await toB64(f);
-          content.push({type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}});
+          const disc=DISCIPLINES.find(d=>d.id===id);
+          content.push({type:"text",text:"--- "+( disc?.label||id)+" DRAWINGS ("+n+") ---"});
+          content.push({type:"document",source:{type:"base64",media_type:"application/pdf",data:await toB64(f)}});
         }
-        content.push({type:"text",text:`Please perform a cross-discipline coordination review.${projTxt}${locTxt}${revTxt}`});
+        content.push({type:"text",text:"Please perform a cross-discipline coordination review."+proj+loc+rev});
       } else if(isSubmittal){
-        const b64=await toB64(file);
-        const refB64=await toB64(refFile);
         content=[
           {type:"text",text:"DOCUMENT 1 — SUBMITTAL:"},
-          {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-          {type:"text",text:"DOCUMENT 2 — REFERENCE DRAWING / SPECIFICATION:"},
-          {type:"document",source:{type:"base64",media_type:"application/pdf",data:refB64}},
-          {type:"text",text:`Please compare the submittal against the reference.${projTxt}${locTxt}${revTxt}`}
+          {type:"document",source:{type:"base64",media_type:"application/pdf",data:await toB64(file)}},
+          {type:"text",text:"DOCUMENT 2 — REFERENCE:"},
+          {type:"document",source:{type:"base64",media_type:"application/pdf",data:await toB64(refFile)}},
+          {type:"text",text:"Compare the submittal against the reference."+proj+loc+rev}
         ];
       } else {
-        const b64=await toB64(file);
         const up=reviewType==="custom"?customPrompt.trim():"Please perform a QC review of this document.";
         content=[
-          {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-          {type:"text",text:up+projTxt+locTxt+revTxt}
+          {type:"document",source:{type:"base64",media_type:"application/pdf",data:await toB64(file)}},
+          {type:"text",text:up+proj+loc+rev}
         ];
       }
-      setStoredContent(content);
       if(abortRef.current){setLoading(false);return;}
-      const timeoutP=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
-      const fetchP=fetch("/api/claude",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:3000,
-          system:getSystemPrompt(),
-          messages:[{role:"user",content}]
-        })
-      });
-      const resp=await Promise.race([fetchP,timeoutP]);
+      setStoredContent(content);
+      const tp=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
+      const fp=fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:buildSystem(reviewType,partialCats),messages:[{role:"user",content}]})});
+      const resp=await Promise.race([fp,tp]);
       const data=await resp.json();
       if(data.error){setError("API Error: "+data.error.message);setLoading(false);return;}
       const text=data.content?.map(i=>i.text||"").join("")||"No response.";
       setResults({text,ts:new Date().toLocaleString(),fileName:isCross?null:fileName,refFileName:isSubmittal?refFileName:null,crossFiles:isCross?Object.entries(crossFiles).map(([id,v])=>({id,name:v.name})):null,projName,projLoc,reviewer,reviewType,customPrompt,feedbackHistory:[]});
     }catch(e){
-      if(e.name==="AbortError")setError("Review cancelled.");
-      else if(e.message==="timeout")setError("⏱ Request timed out — server may be waking up. Wait 15 seconds and try again.");
-      else setError("Request failed: "+e.message);
+      setError(e.message==="timeout"?"⏱ Timed out — server may be waking up. Wait 15s and try again.":"Request failed: "+e.message);
     }
     setLoading(false);
   };
 
-  // ── Rerun with feedback ───────────────────────────────
-  const rerunWithFeedback=async()=>{
+  const rerunFeedback=async()=>{
     if(!feedback.trim()||!results||!storedContent)return;
-    setFeedbackLoading(true);
-    abortRef.current=false;
+    setFeedbackLoading(true);abortRef.current=false;
     try{
-      const timeoutP2=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
-      const fetchP2=fetch("/api/claude",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:3000,
-          system:getSystemPrompt(),
-          messages:[
-            {role:"user",content:storedContent},
-            {role:"assistant",content:results.text},
-            {role:"user",content:"Please revise the review based on this feedback: "+feedback.trim()+"\n\nKeep all valid findings. Add, remove, or adjust findings based on my feedback. Return the full updated review in the same CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS format."}
-          ]
-        })
-      });
-      const resp=await Promise.race([fetchP2,timeoutP2]);
+      const tp=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
+      const fp=fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+        model:"claude-sonnet-4-20250514",max_tokens:3000,system:buildSystem(reviewType,partialCats),
+        messages:[
+          {role:"user",content:storedContent},
+          {role:"assistant",content:results.text},
+          {role:"user",content:"Revise the review based on this feedback: "+feedback.trim()+"\nKeep valid findings. Return full updated review in the same format."}
+        ]
+      })});
+      const resp=await Promise.race([fp,tp]);
       const data=await resp.json();
       if(data.error){setError("API Error: "+data.error.message);setFeedbackLoading(false);return;}
       const text=data.content?.map(i=>i.text||"").join("")||"No response.";
-      const hist=[...(results.feedbackHistory||[]),{feedback:feedback.trim(),ts:new Date().toLocaleString()}];
-      setResults(p=>({...p,text,feedbackHistory:hist}));
+      setResults(p=>({...p,text,feedbackHistory:[...(p.feedbackHistory||[]),{feedback:feedback.trim(),ts:new Date().toLocaleString()}]}));
       setFeedback("");
     }catch(e){
-      if(e.name==="AbortError")setError("Cancelled.");
-      else if(e.message==="timeout")setError("⏱ Timed out — try again.");
-      else setError("Request failed: "+e.message);
+      setError(e.message==="timeout"?"⏱ Timed out.":"Request failed: "+e.message);
     }
     setFeedbackLoading(false);
   };
 
-  // ── Export ────────────────────────────────────────────
   const exportReport=()=>{
     if(!results)return;
-    const rt=REVIEW_TYPES.find(r=>r.id===results.reviewType);
-    let txt=`MEP QC REVIEW REPORT\n${"=".repeat(60)}\nProject: ${results.projName||"---"}\nLocation: ${results.projLoc||"---"}\n`;
-    if(results.fileName)txt+=`File: ${results.fileName}\n`;
-    if(results.refFileName)txt+=`Reference: ${results.refFileName}\n`;
-    if(results.crossFiles)txt+=`Disciplines: ${results.crossFiles.map(f=>f.name).join(", ")}\n`;
-    txt+=`Reviewer: ${results.reviewer||"---"}\nReview Type: ${rt?.label}\nDate: ${results.ts}\n`;
-    if(results.reviewType==="custom")txt+=`Prompt: ${results.customPrompt}\n`;
-    if(results.feedbackHistory?.length)txt+=`Feedback Revisions: ${results.feedbackHistory.length}\n`;
-    txt+=`${"=".repeat(60)}\n\n${results.text}`;
+    let txt="MEP QC REVIEW REPORT\n"+"=".repeat(60)+"\n";
+    txt+="Project: "+(results.projName||"---")+"\nLocation: "+(results.projLoc||"---")+"\n";
+    if(results.fileName)txt+="File: "+results.fileName+"\n";
+    if(results.refFileName)txt+="Reference: "+results.refFileName+"\n";
+    if(results.crossFiles)txt+="Disciplines: "+results.crossFiles.map(f=>f.name).join(", ")+"\n";
+    txt+="Reviewer: "+(results.reviewer||"---")+"\nDate: "+results.ts+"\n"+"=".repeat(60)+"\n\n"+results.text;
     const a=document.createElement("a");
     a.href="data:text/plain;charset=utf-8,"+encodeURIComponent(txt);
-    a.download=`QC_Review_${results.projName||"Report"}.txt`;
+    a.download="QC_Review_"+(results.projName||"Report")+".txt";
     a.click();
   };
 
-  const inp={width:"100%",padding:"8px 11px",border:"1px solid "+C.border,borderRadius:7,fontSize:13,color:C.text,background:C.surface,outline:"none"};
   const sinp={...inp,padding:"6px 10px",fontSize:12};
 
   return(
@@ -308,32 +428,33 @@ function App(){
           <div style={{width:38,height:38,borderRadius:9,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🔍</div>
           <div>
             <div style={{fontSize:17,fontWeight:700,color:"#fff"}}>MEP QC Review</div>
-            <div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>AI-powered quality control for drawings, submittals, proposals, and reports</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>AI-powered quality control · Kimley-Horn</div>
           </div>
         </div>
-        {results&&<button onClick={exportReport} style={{padding:"7px 16px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>📥 Export Report</button>}
+        {results&&!isAgent&&<button onClick={exportReport} style={{padding:"7px 16px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>📥 Export Report</button>}
       </div>
 
       {/* Top controls */}
-      <div style={{background:C.surface,borderBottom:"1px solid "+C.border,padding:"16px 24px",flexShrink:0}}>
-        <div style={{marginBottom:reviewType==="partial"||reviewType==="custom"||reviewType==="cross"?12:0}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Review Type</div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {REVIEW_TYPES.map(rt=>{
-              const act=reviewType===rt.id;
-              return(
-                <div key={rt.id} onClick={()=>{setReviewType(rt.id);setResults(null);setError("");setStoredContent(null);setFeedback("");}} style={{display:"flex",alignItems:"center",gap:7,padding:"8px 14px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
-                  <div style={{width:13,height:13,borderRadius:"50%",border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:4,height:4,borderRadius:"50%",background:"white"}}/>}</div>
-                  <span style={{fontSize:12}}>{rt.icon}</span>
-                  <span style={{fontSize:12,fontWeight:act?700:500,color:act?C.accent:C.text}}>{rt.label}</span>
-                </div>
-              );
-            })}
-          </div>
+      <div style={{background:C.surface,borderBottom:"1px solid "+C.border,padding:"14px 24px",flexShrink:0}}>
+        {/* Review type pills */}
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Review Type</div>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:(reviewType==="partial"||reviewType==="custom"||reviewType==="cross")?12:0}}>
+          {REVIEW_TYPES.map(rt=>{
+            const act=reviewType===rt.id;
+            return(
+              <div key={rt.id} onClick={()=>{setReviewType(rt.id);setResults(null);setError("");setStoredContent(null);setFeedback("");}}
+                style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
+                <div style={{width:12,height:12,borderRadius:"50%",border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",flexShrink:0}}/>
+                <span style={{fontSize:12}}>{rt.icon}</span>
+                <span style={{fontSize:12,fontWeight:act?700:500,color:act?C.accent:C.text}}>{rt.label}</span>
+              </div>
+            );
+          })}
         </div>
 
+        {/* Partial categories */}
         {reviewType==="partial"&&(
-          <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",border:"1px solid "+C.border}}>
+          <div style={{background:C.bg,borderRadius:8,padding:"10px 14px",border:"1px solid "+C.border}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Select Categories</div>
               <div style={{display:"flex",gap:4}}>
@@ -345,8 +466,9 @@ function App(){
               {PARTIAL_CATS.map(cat=>{
                 const act=partialCats.includes(cat.id);
                 return(
-                  <div key={cat.id} onClick={()=>setPartialCats(p=>p.includes(cat.id)?p.filter(x=>x!==cat.id):[...p,cat.id])} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"1.5px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
-                    <div style={{width:13,height:13,borderRadius:3,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<span style={{color:"white",fontSize:8,fontWeight:700}}>✓</span>}</div>
+                  <div key={cat.id} onClick={()=>setPartialCats(p=>p.includes(cat.id)?p.filter(x=>x!==cat.id):[...p,cat.id])}
+                    style={{display:"flex",alignItems:"center",gap:6,padding:"5px 11px",borderRadius:6,border:"1.5px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none"}}>
+                    <div style={{width:12,height:12,borderRadius:3,border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center"}}>{act&&<span style={{color:"white",fontSize:8,fontWeight:700}}>✓</span>}</div>
                     <span style={{fontSize:11}}>{cat.icon} <span style={{fontWeight:act?600:400,color:act?C.accent:C.text}}>{cat.label}</span></span>
                   </div>
                 );
@@ -356,33 +478,33 @@ function App(){
           </div>
         )}
 
+        {/* Custom prompt */}
         {reviewType==="custom"&&(
           <div>
             <label style={{fontSize:11,color:C.muted,marginBottom:5,display:"block",fontWeight:600}}>Your Review Prompt</label>
             <textarea value={customPrompt} onChange={e=>setCustomPrompt(e.target.value)}
-              placeholder="Describe what you want reviewed... e.g. Check all duct sizes against the schedule and flag any exceeding max velocity"
+              placeholder="Describe what you want reviewed..."
               style={{...inp,height:70,resize:"vertical",fontSize:12,lineHeight:1.6}}/>
             <div style={{fontSize:10,color:customPrompt.length<10?C.danger:C.success,marginTop:3}}>{customPrompt.length<10?"Enter at least 10 characters":"✓ Ready"}</div>
           </div>
         )}
 
+        {/* Cross discipline status */}
         {reviewType==="cross"&&(
-          <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",border:"1px solid "+C.border}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Disciplines Loaded</div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {DISCIPLINE_TYPES.map(disc=>{
-                const hasFile=!!crossFiles[disc.id];
+          <div style={{background:C.bg,borderRadius:8,padding:"10px 14px",border:"1px solid "+C.border}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Disciplines Loaded</div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              {DISCIPLINES.map(d=>{
+                const has=!!crossFiles[d.id];
                 return(
-                  <div key={disc.id} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"2px solid "+(hasFile?disc.color:C.border),background:hasFile?disc.color+"12":C.surface,fontSize:12}}>
-                    <span>{disc.icon}</span>
-                    <span style={{fontWeight:hasFile?700:400,color:hasFile?disc.color:C.text}}>{disc.label}</span>
-                    {hasFile&&<span style={{fontSize:10,color:disc.color}}>✓</span>}
+                  <div key={d.id} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 11px",borderRadius:6,border:"2px solid "+(has?d.color:C.border),background:has?d.color+"12":C.surface,fontSize:12}}>
+                    <span>{d.icon}</span><span style={{fontWeight:has?700:400,color:has?d.color:C.text}}>{d.label}</span>
+                    {has&&<span style={{fontSize:10,color:d.color}}>✓</span>}
                   </div>
                 );
               })}
             </div>
-            {crossCount<2&&<div style={{fontSize:11,color:C.warn,marginTop:6}}>⚠ Upload at least 2 discipline PDFs below</div>}
-            {crossCount>=2&&<div style={{fontSize:11,color:C.success,marginTop:6}}>✓ {crossCount} disciplines ready to compare</div>}
+            <div style={{fontSize:11,color:crossCount<2?C.warn:C.success,marginTop:6}}>{crossCount<2?"⚠ Upload at least 2 discipline PDFs below":"✓ "+crossCount+" disciplines ready"}</div>
           </div>
         )}
       </div>
@@ -391,42 +513,47 @@ function App(){
       <div style={{display:"grid",gridTemplateColumns:"260px 1fr",flex:1,minHeight:0}}>
 
         {/* Sidebar */}
-        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"20px 16px",overflowY:"auto"}}>
+        <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"18px 16px",overflowY:"auto"}}>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Project Info</div>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",flexDirection:"column",gap:9}}>
             <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Name</label><input style={sinp} value={projName} onChange={e=>setProjName(e.target.value)} placeholder="e.g. Main Street Office"/></div>
             <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Location</label><input style={sinp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
             <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Reviewer Initials</label><input style={sinp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
           </div>
-          <div style={{marginTop:20,padding:"12px",background:C.bg,borderRadius:8,border:"1px solid "+C.border}}>
-            <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:4}}>{activeReview?.icon} {activeReview?.label}</div>
-            <div style={{fontSize:11,color:C.muted,lineHeight:1.6}}>{activeReview?.desc}</div>
+          <div style={{marginTop:18,padding:"11px",background:C.bg,borderRadius:8,border:"1px solid "+C.border}}>
+            <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:3}}>{activeRT?.icon} {activeRT?.label}</div>
+            <div style={{fontSize:11,color:C.muted,lineHeight:1.6}}>{activeRT?.desc}</div>
           </div>
         </div>
 
-        {/* Main content */}
+        {/* Content */}
         <div style={{padding:24,overflowY:"auto"}}>
 
+          {/* Agent */}
+          {isAgent&&<MEPAgent/>}
+
           {/* Upload zones */}
-          {isCross?(
+          {!isAgent&&isCross&&(
             <div>
-              <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Upload a PDF for each discipline to compare:</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:20}}>
-                {DISCIPLINE_TYPES.map(disc=>(
-                  <FileZone key={disc.id}
-                    file={crossFiles[disc.id]?.file||null} fileName={crossFiles[disc.id]?.name||""}
-                    onFile={f=>handleCrossFile(disc.id,f)} onRemove={()=>removeCrossFile(disc.id)}
-                    loading={loading} label={disc.label+" Drawings"} sublabel={"Drop "+disc.label.toLowerCase()+" PDF"}
-                    color={disc.color} tag={disc.icon}/>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Upload a PDF for each discipline:</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:12,marginBottom:20}}>
+                {DISCIPLINES.map(d=>(
+                  <FileZone key={d.id} file={crossFiles[d.id]?.file||null} fileName={crossFiles[d.id]?.name||""}
+                    onFile={f=>handleCrossFile(d.id,f)} onRemove={()=>removeCrossFile(d.id)}
+                    loading={loading} label={d.label+" Drawings"} sublabel={"Drop "+d.label.toLowerCase()+" PDF"} color={d.color} tag={d.icon}/>
                 ))}
               </div>
             </div>
-          ):isSubmittal?(
+          )}
+
+          {!isAgent&&isSubmittal&&(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
-              <FileZone file={file} fileName={fileName} onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");setStoredContent(null);}} loading={loading} label="① Submittal PDF" sublabel="Product data, shop drawings, equipment submittals" color={C.accent} tag="1"/>
+              <FileZone file={file} fileName={fileName} onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");setStoredContent(null);}} loading={loading} label="① Submittal PDF" sublabel="Product data, shop drawings" color={C.accent} tag="1"/>
               <FileZone file={refFile} fileName={refFileName} onFile={handleRefFile} onRemove={()=>{setRefFile(null);setRefFileName("");}} loading={loading} label="② Reference Drawing / Spec" sublabel="Contract drawing or specification" color="#7C3AED" tag="2"/>
             </div>
-          ):(
+          )}
+
+          {!isAgent&&!isCross&&!isSubmittal&&(
             <div style={{marginBottom:20}}>
               <FileZone file={file} fileName={fileName} onFile={handleFile}
                 onRemove={()=>{setFile(null);setFileName("");setResults(null);setStoredContent(null);}}
@@ -436,64 +563,61 @@ function App(){
           )}
 
           {/* Warnings */}
-          {isSubmittal&&file&&!refFile&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Also upload the reference drawing or spec to run the comparison.</div>}
-          {file&&fileSize>8*1024*1024&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Large file ({(fileSize/1024/1024).toFixed(1)} MB) — try splitting into fewer sheets if it times out.</div>}
-          {error&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:14,color:C.danger,fontSize:13}}>{error}</div>}
+          {!isAgent&&isSubmittal&&file&&!refFile&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Upload the reference drawing or spec to run the comparison.</div>}
+          {!isAgent&&file&&fileSize>8*1024*1024&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Large file ({(fileSize/1024/1024).toFixed(1)} MB) — try splitting into fewer sheets if it times out.</div>}
+          {!isAgent&&error&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:14,color:C.danger,fontSize:13}}>{error}</div>}
 
           {/* Run button */}
-          {(file||isCross)&&!loading&&(
-            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"13px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:22}}>
-              {activeReview?.icon} Run {activeReview?.label}
+          {!isAgent&&(file||isCross)&&!loading&&(
+            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"13px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:20}}>
+              {activeRT?.icon} Run {activeRT?.label}
             </button>
           )}
 
           {/* Loading */}
-          {loading&&(
+          {!isAgent&&loading&&(
             <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:36,textAlign:"center",marginBottom:20}}>
               <div style={{width:42,height:42,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/>
-              <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:5}}>
-                {reviewType==="cross"?`Comparing ${crossCount} discipline drawings...`:reviewType==="submittal"?"Comparing submittal against reference...":"Running "+activeReview?.label+"..."}
-              </div>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:5}}>Running {activeRT?.label}...</div>
               <div style={{fontSize:12,color:C.muted,marginBottom:18}}>This may take 30–60 seconds</div>
-              <button onClick={cancelReview} style={{padding:"7px 18px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>
+              <button onClick={cancel} style={{padding:"7px 18px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>
             </div>
           )}
 
           {/* Results */}
-          {results&&(
+          {!isAgent&&results&&(
             <div style={{animation:"fadeIn 0.3s ease"}}>
-
               {/* Feedback box */}
-              <div style={{background:C.surface,border:"2px solid "+C.accent,borderRadius:12,padding:"16px 18px",marginBottom:14}}>
-                <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:4}}>💬 Refine This Review</div>
-                <div style={{fontSize:11,color:C.muted,marginBottom:10}}>Enter feedback to revise specific findings — the AI will update the review based on your input without needing to re-upload the PDF.</div>
+              <div style={{background:C.surface,border:"2px solid "+C.accent,borderRadius:12,padding:"14px 18px",marginBottom:14}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:3}}>💬 Refine This Review</div>
+                <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Enter feedback to revise specific findings — the AI will update without re-uploading the PDF.</div>
                 {results.feedbackHistory?.length>0&&(
-                  <div style={{marginBottom:10,display:"flex",flexDirection:"column",gap:5}}>
+                  <div style={{marginBottom:8,display:"flex",flexDirection:"column",gap:4}}>
                     {results.feedbackHistory.map((h,i)=>(
-                      <div key={i} style={{fontSize:11,background:C.bg,borderRadius:6,padding:"5px 10px",border:"1px solid "+C.border,color:C.muted}}>
+                      <div key={i} style={{fontSize:11,background:C.bg,borderRadius:5,padding:"4px 9px",border:"1px solid "+C.border,color:C.muted}}>
                         <strong style={{color:C.text}}>Revision {i+1}:</strong> {h.feedback} <span style={{color:C.light}}>· {h.ts}</span>
                       </div>
                     ))}
                   </div>
                 )}
                 <textarea value={feedback} onChange={e=>setFeedback(e.target.value)}
-                  placeholder="e.g. You missed the fire damper issue on sheet M2.01 — please add that. Also remove the insulation comment, it is not applicable here."
-                  style={{...inp,height:70,resize:"vertical",fontSize:12,lineHeight:1.6,marginBottom:10}}/>
+                  placeholder="e.g. You missed the fire damper issue on sheet M2.01 — please add that. Remove the insulation comment, it is not applicable."
+                  style={{...inp,height:65,resize:"vertical",fontSize:12,lineHeight:1.6,marginBottom:8}}/>
                 <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                  <button onClick={rerunWithFeedback} disabled={!feedback.trim()||feedbackLoading}
-                    style={{padding:"8px 20px",background:feedback.trim()&&!feedbackLoading?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:7,fontSize:13,fontWeight:600,cursor:feedback.trim()&&!feedbackLoading?"pointer":"not-allowed",display:"flex",alignItems:"center",gap:7}}>
-                    {feedbackLoading?<><div style={{width:14,height:14,borderRadius:"50%",border:"2px solid rgba(255,255,255,0.4)",borderTopColor:"#fff",animation:"spin 0.8s linear infinite"}}/>Revising...</>:"🔄 Revise Review"}
+                  <button onClick={rerunFeedback} disabled={!feedback.trim()||feedbackLoading}
+                    style={{padding:"7px 18px",background:feedback.trim()&&!feedbackLoading?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:7,fontSize:13,fontWeight:600,cursor:feedback.trim()&&!feedbackLoading?"pointer":"not-allowed",display:"flex",alignItems:"center",gap:6}}>
+                    {feedbackLoading?<><div style={{width:13,height:13,borderRadius:"50%",border:"2px solid rgba(255,255,255,0.4)",borderTopColor:"#fff",animation:"spin 0.8s linear infinite"}}/>Revising...</>:"🔄 Revise Review"}
                   </button>
-                  {feedbackLoading&&<button onClick={cancelReview} style={{padding:"8px 14px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>}
-                  <span style={{fontSize:11,color:C.muted}}>PDF stays loaded — no need to re-upload</span>
+                  {feedbackLoading&&<button onClick={cancel} style={{padding:"7px 13px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>}
+                  <span style={{fontSize:11,color:C.muted}}>PDF stays loaded — no re-upload needed</span>
                 </div>
               </div>
 
               {/* Result header */}
-              <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
+              <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:"13px 17px",marginBottom:13,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                 <div>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
-                    <div style={{fontSize:15,fontWeight:700,color:C.text}}>{REVIEW_TYPES.find(r=>r.id===results.reviewType)?.icon} {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.label}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                    <div style={{fontSize:15,fontWeight:700}}>{REVIEW_TYPES.find(r=>r.id===results.reviewType)?.icon} {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.label}</div>
                     <span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,border:"1px solid "+C.border,padding:"2px 8px",borderRadius:20}}>{countFindings(results.text)} findings</span>
                     {results.feedbackHistory?.length>0&&<span style={{fontSize:11,fontWeight:600,color:C.accent,background:C.accentLight,border:"1px solid #BFDBFE",padding:"2px 8px",borderRadius:20}}>{results.feedbackHistory.length} revision{results.feedbackHistory.length!==1?"s":""}</span>}
                   </div>
@@ -511,12 +635,12 @@ function App(){
 
               {/* Findings */}
               <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
-                <div style={{padding:"11px 16px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:600,color:C.text}}>Review Findings</div>
+                <div style={{padding:"10px 16px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:600}}>Review Findings</div>
                 <div style={{padding:14}}>
-                  {parseFindings(results.text).map((sec,i)=>(
-                    <div key={i} style={{background:sec.bg,borderLeft:"4px solid "+sec.border,borderRadius:"0 8px 8px 0",padding:"13px 16px",marginBottom:10}}>
-                      <div style={{fontSize:13,fontWeight:700,color:sec.color,marginBottom:8,display:"flex",alignItems:"center",gap:6}}><span>{sec.icon}</span>{sec.label}</div>
-                      <div style={{fontSize:12.5,color:C.text,lineHeight:1.85,whiteSpace:"pre-wrap"}}>{sec.content}</div>
+                  {parseFindings(results.text).map((s,i)=>(
+                    <div key={i} style={{background:s.bg,borderLeft:"4px solid "+s.border,borderRadius:"0 8px 8px 0",padding:"12px 16px",marginBottom:10}}>
+                      <div style={{fontSize:13,fontWeight:700,color:s.color,marginBottom:7,display:"flex",alignItems:"center",gap:6}}><span>{s.icon}</span>{s.label}</div>
+                      <div style={{fontSize:12.5,color:C.text,lineHeight:1.85,whiteSpace:"pre-wrap"}}>{s.content}</div>
                     </div>
                   ))}
                 </div>
@@ -524,19 +648,19 @@ function App(){
             </div>
           )}
 
-          {/* Empty state */}
-          {!file&&!isCross&&!loading&&!results&&(
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:50,textAlign:"center"}}>
-              <div style={{fontSize:44,marginBottom:14}}>{activeReview?.icon}</div>
-              <div style={{fontSize:15,fontWeight:600,marginBottom:6,color:C.muted}}>Ready for {activeReview?.label}</div>
-              <div style={{fontSize:12,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>{activeReview?.desc}</div>
+          {/* Empty states */}
+          {!isAgent&&!file&&!isCross&&!loading&&!results&&(
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:48,textAlign:"center"}}>
+              <div style={{fontSize:42,marginBottom:12}}>{activeRT?.icon}</div>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:6,color:C.muted}}>Ready for {activeRT?.label}</div>
+              <div style={{fontSize:12,maxWidth:420,margin:"0 auto",lineHeight:1.8,color:C.light}}>{activeRT?.desc}</div>
             </div>
           )}
-          {isCross&&crossCount===0&&!loading&&!results&&(
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:50,textAlign:"center"}}>
-              <div style={{fontSize:44,marginBottom:14}}>🔀</div>
+          {!isAgent&&isCross&&crossCount===0&&!loading&&!results&&(
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:48,textAlign:"center"}}>
+              <div style={{fontSize:42,marginBottom:12}}>🔀</div>
               <div style={{fontSize:15,fontWeight:600,marginBottom:6,color:C.muted}}>Cross Discipline Review</div>
-              <div style={{fontSize:12,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>Upload PDFs from at least 2 disciplines above. Claude will compare all drawings and identify coordination conflicts, spatial clashes, and inconsistencies between disciplines.</div>
+              <div style={{fontSize:12,maxWidth:420,margin:"0 auto",lineHeight:1.8,color:C.light}}>Upload PDFs from at least 2 disciplines. Claude will compare all drawings and identify coordination conflicts between disciplines.</div>
             </div>
           )}
         </div>

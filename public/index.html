@@ -42,7 +42,7 @@ const REVIEW_TYPES=[
   {id:"partial",label:"Partial QC Review",icon:"🔎",isSubmittal:false,isCross:false,desc:"Select specific review categories. Faster and more targeted."},
   {id:"combined",label:"Full MEP QC Review",icon:"🔍",isSubmittal:false,isCross:false,desc:"Comprehensive review covering all categories in one deduplicated report."},
   {id:"submittal",label:"Submittal Review",icon:"📦",isSubmittal:true,isCross:false,desc:"Upload a submittal and reference drawing. AI compares both and flags discrepancies."},
-  {id:"cross",label:"Cross Discipline Review",icon:"🔀",isSubmittal:false,isCross:true,desc:"Upload drawings from multiple disciplines. AI compares them for coordination conflicts and inconsistencies."},
+  {id:"cross",label:"Cross Discipline Review",icon:"🔀",isSubmittal:false,isCross:true,desc:"Upload drawings from multiple disciplines. AI compares them for coordination conflicts."},
   {id:"proposal",label:"Proposal Review",icon:"📝",isSubmittal:false,isCross:false,desc:"Reviews scope clarity, completeness, fee adequacy, exclusions, and risk items."},
   {id:"narrative",label:"Report / Narrative Review",icon:"📄",isSubmittal:false,isCross:false,desc:"Reviews basis of design, engineering reports, and technical documents."},
   {id:"custom",label:"Custom Review",icon:"✏️",isSubmittal:false,isCross:false,desc:"Write your own review prompt to focus on specific items or concerns."},
@@ -110,154 +110,94 @@ function FileZone({file,fileName,onFile,onRemove,loading,label,sublabel,color,ta
 }
 
 function App(){
+  // ── State ─────────────────────────────────────────────
   const [projName,setProjName]=useState("");
   const [projLoc,setProjLoc]=useState("");
   const [reviewer,setReviewer]=useState("");
   const [reviewType,setReviewType]=useState("partial");
   const [customPrompt,setCustomPrompt]=useState("");
   const [partialCats,setPartialCats]=useState(["code","legibility"]);
-
-  // Primary file
   const [file,setFile]=useState(null);
   const [fileName,setFileName]=useState("");
   const [fileSize,setFileSize]=useState(0);
-
-  // Submittal reference file
   const [refFile,setRefFile]=useState(null);
   const [refFileName,setRefFileName]=useState("");
-
-  // Cross discipline files — keyed by discipline id
   const [crossFiles,setCrossFiles]=useState({});
-
   const [loading,setLoading]=useState(false);
   const [results,setResults]=useState(null);
   const [error,setError]=useState("");
+  const [storedContent,setStoredContent]=useState(null);
+  const [feedback,setFeedback]=useState("");
+  const [feedbackLoading,setFeedbackLoading]=useState(false);
   const abortRef=useRef(null);
 
   const activeReview=REVIEW_TYPES.find(r=>r.id===reviewType);
   const isSubmittal=activeReview?.isSubmittal;
   const isCross=activeReview?.isCross;
-
-  const handleFile=f=>{if(!f||f.type!=="application/pdf")return;setFile(f);setFileName(f.name);setFileSize(f.size);setResults(null);setError("");};
-  const handleRefFile=f=>{if(!f||f.type!=="application/pdf")return;setRefFile(f);setRefFileName(f.name);setResults(null);setError("");};
-  const handleCrossFile=(discId,f)=>{if(!f||f.type!=="application/pdf")return;setCrossFiles(p=>({...p,[discId]:{file:f,name:f.name}}));setResults(null);setError("");};
-  const removeCrossFile=discId=>setCrossFiles(p=>{const n={...p};delete n[discId];return n;});
-
   const crossCount=Object.keys(crossFiles).length;
+
+  const handleFile=f=>{if(!f||f.type!=="application/pdf")return;setFile(f);setFileName(f.name);setFileSize(f.size);setResults(null);setError("");setStoredContent(null);};
+  const handleRefFile=f=>{if(!f||f.type!=="application/pdf")return;setRefFile(f);setRefFileName(f.name);setResults(null);setError("");};
+  const handleCrossFile=(id,f)=>{if(!f||f.type!=="application/pdf")return;setCrossFiles(p=>({...p,[id]:{file:f,name:f.name}}));setResults(null);setError("");};
+  const removeCrossFile=id=>setCrossFiles(p=>{const n={...p};delete n[id];return n;});
+
   const canRun=!loading&&
-    (isCross?crossCount>=2:file)&&
-    (!isSubmittal||refFile)&&
+    (isCross?crossCount>=2:!!file)&&
+    (!isSubmittal||!!refFile)&&
     (reviewType!=="custom"||customPrompt.trim().length>10)&&
     (reviewType!=="partial"||partialCats.length>0);
 
   const toB64=f=>new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result.split(",")[1]);rd.onerror=rej;rd.readAsDataURL(f);});
 
+  // ── System prompt ─────────────────────────────────────
   const getSystemPrompt=()=>{
-    const catDescriptions={
+    const catDesc={
       code:"Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, and local amendments",
-      legibility:"Legibility and drawing presentation — text overlapping linework, font compliance (Arial), inconsistent text sizes, missing leaders or callouts",
+      legibility:"Legibility and presentation — text overlapping linework, font compliance (Arial), inconsistent text sizes, missing leaders",
       coordination:"MEP coordination — conflicts between disciplines, missing coordination notes",
-      completeness:"Completeness — missing information, incomplete notes, missing schedules, unreferenced details, blank fields",
+      completeness:"Completeness — missing information, incomplete notes, missing schedules, unreferenced details",
       constructability:"Constructability — missing clearances, difficult installations, access issues, maintenance access",
       energy:"Energy compliance — ASHRAE 90.1, insulation, equipment efficiencies, controls, economizers",
     };
+    const footer=`\nDo NOT duplicate findings. Organize into exactly these sections:\nCRITICAL ISSUES:\nMAJOR COMMENTS:\nMINOR COMMENTS:\nRECOMMENDATIONS:\nBe specific about sheet numbers and code sections where visible.`;
     if(reviewType==="partial"){
-      const selected=PARTIAL_CATS.filter(c=>partialCats.includes(c.id));
-      return`You are an expert MEP engineer performing a targeted QC review of engineering drawings.
-You are ONLY reviewing for these selected categories:
-${selected.map((c,i)=>`${i+1}. ${catDescriptions[c.id]||c.label}`).join("\n")}
-${selected.length+1}. Kimley-Horn logo verification — check every sheet for the Kimley-Horn logo in the title block. Flag any sheet where it is missing or incorrect.
-Focus exclusively on these areas. Do NOT duplicate findings.
-Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS
-Be specific about sheet numbers and code sections.`;
+      const sel=PARTIAL_CATS.filter(c=>partialCats.includes(c.id));
+      return`You are an expert MEP engineer performing a targeted QC review.\nOnly review for:\n${sel.map((c,i)=>`${i+1}. ${catDesc[c.id]}`).join("\n")}\n${sel.length+1}. Kimley-Horn logo — verify present on every sheet title block. Flag any sheet missing it.`+footer;
     }
-    if(reviewType==="combined"){
-      return`You are an expert MEP engineer performing a comprehensive QC review of engineering drawings.
-Cover ALL of the following in one unified pass:
-1. General completeness, missing information, errors, inconsistencies
-2. Code compliance — IMC, ASHRAE 62.1, ASHRAE 90.1, NFPA 90A, NEC, IBC, local amendments
-3. MEP coordination — conflicts between disciplines, missing coordination notes
-4. Energy compliance — ASHRAE 90.1, insulation, efficiencies, controls, economizers
-5. Constructability — clearances, access, difficult installations, field coordination
-6. Drawing presentation — text overlapping, font compliance, cluttered backgrounds
-7. Kimley-Horn logo — verify present on every sheet title block
-Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
-    }
-    if(reviewType==="submittal"){
-      return`You are an expert MEP engineer performing a formal submittal review. Document 1 is the SUBMITTAL, Document 2 is the REFERENCE (contract drawings or specifications).
-Compare and check:
-1. Model numbers and product compliance
-2. Performance data — capacity, efficiency, airflow, pressure, electrical characteristics
-3. Physical dimensions and weights
-4. Electrical requirements — voltage, phase, amperage, MCA, MOCP
-5. Accessories and options — all specified items included?
-6. Submittal completeness — all required data sheets and certifications provided?
-7. Substitutions — clearly marked and truly equal?
-8. Installation requirements — conflicts with design intent?
-State: "Submittal shows [X], contract documents require [Y]" where values differ.
-Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
-    }
-    if(reviewType==="cross"){
-      return`You are an expert MEP engineer performing a cross-discipline coordination review. You have been provided with drawings from multiple disciplines.
-Review ALL uploaded drawings together and identify:
-1. Spatial conflicts — where elements from different disciplines occupy the same space or interfere with each other
-2. Elevation conflicts — ceiling heights, beam depths, duct sizes, pipe sizes that conflict
-3. Inconsistent information — dimensions, elevations, or specifications that differ between discipline drawings
-4. Missing coordination — items shown on one discipline's drawings not accounted for on another's
-5. Structural penetrations — mechanical/electrical/plumbing elements requiring structural penetrations not shown on structural drawings
-6. Equipment coordination — equipment shown on one drawing not coordinated with supporting disciplines (electrical connections, structural support, plumbing connections)
-7. Grid and dimension alignment — column grids, room dimensions that don't align between disciplines
-8. Keynote and detail consistency — details referenced on one set that conflict with another
-For each finding clearly state WHICH disciplines are involved (e.g. "Mechanical vs Structural").
-Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS
-Be specific about sheet numbers and locations where visible.`;
-    }
-    if(reviewType==="proposal"){
-      return`You are an expert MEP engineering project manager reviewing a proposal before submission.
-Review for: scope clarity, deliverables, exclusions, assumptions, fee adequacy, schedule realism, risk items, client requirements, grammar and professionalism.
-Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
-    }
-    if(reviewType==="narrative"){
-      return`You are an expert MEP engineer reviewing a technical report or basis of design narrative.
-Review for: technical accuracy, completeness, code references, consistency, clarity, supporting data, conclusions, grammar and formatting.
-Do NOT duplicate findings. Organize into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS`;
-    }
-    if(reviewType==="custom"){
-      return`You are an expert MEP engineer performing a targeted QC review.
-Organize findings into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS
-Be specific about sheet numbers and code sections where applicable.`;
-    }
-    return"You are an expert MEP engineer. Organize findings into: CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS";
+    if(reviewType==="combined") return`You are an expert MEP engineer performing a comprehensive QC review covering: completeness, code compliance (IMC, ASHRAE 62.1/90.1, NFPA 90A, NEC, IBC), MEP coordination, energy compliance, constructability, drawing presentation, and Kimley-Horn logo on all sheets.`+footer;
+    if(reviewType==="submittal") return`You are an expert MEP engineer performing a formal submittal review. Document 1 is the SUBMITTAL, Document 2 is the REFERENCE. Compare model numbers, performance data, dimensions, electrical requirements, accessories, completeness, and substitutions. State "Submittal shows [X], contract requires [Y]" where values differ.`+footer;
+    if(reviewType==="cross") return`You are an expert MEP engineer performing a cross-discipline coordination review across multiple discipline drawings. Identify: spatial conflicts, elevation conflicts, inconsistent information between disciplines, missing coordination, structural penetrations, equipment coordination gaps, and grid/dimension misalignment. For each finding state which disciplines are involved.`+footer;
+    if(reviewType==="proposal") return`You are an expert MEP engineering project manager reviewing a proposal before submission. Review for scope clarity, deliverables, exclusions, assumptions, fee adequacy, schedule realism, risk items, and professionalism.`+footer;
+    if(reviewType==="narrative") return`You are an expert MEP engineer reviewing a technical report or basis of design narrative. Review for technical accuracy, completeness, code references, consistency, clarity, and supporting data.`+footer;
+    return`You are an expert MEP engineer performing a targeted QC review.`+footer;
   };
 
-  const cancelReview=()=>{if(abortRef.current)abortRef.current.abort();setLoading(false);setError("Review cancelled.");};
+  // ── Cancel ────────────────────────────────────────────
+  const cancelReview=()=>{
+    if(abortRef.current)abortRef.current.abort();
+    setLoading(false);
+    setFeedbackLoading(false);
+    setError("Review cancelled.");
+  };
 
+  // ── Run review ────────────────────────────────────────
   const runReview=async()=>{
     if(!canRun)return;
-    setLoading(true);setResults(null);setError("");
-    const controller=new AbortController();
-    abortRef.current=controller;
-
-    const phaseTxt="";
-    const locTxt=projLoc?`\nProject Location: ${projLoc} — apply local codes, climate zone, and jurisdiction amendments.`:"";
+    setLoading(true);setResults(null);setError("");setFeedback("");
+    abortRef.current=false;
+    const locTxt=projLoc?`\nProject Location: ${projLoc}`:"";
     const projTxt=projName?`\nProject: ${projName}`:"";
     const revTxt=reviewer?`\nReviewer: ${reviewer}`:"";
-
-    let userPrompt,content;
-
+    let content=[];
     try{
       if(isCross){
-        // Build content with all discipline files labeled
-        const entries=Object.entries(crossFiles);
-        content=[];
-        for(const [discId,{file:f,name:n}] of entries){
-          const disc=DISCIPLINE_TYPES.find(d=>d.id===discId);
-          content.push({type:"text",text:`--- ${disc?.label||discId} DRAWINGS (${n}) ---`});
+        for(const [id,{file:f,name:n}] of Object.entries(crossFiles)){
+          const disc=DISCIPLINE_TYPES.find(d=>d.id===id);
+          content.push({type:"text",text:`--- ${disc?.label||id} DRAWINGS (${n}) ---`});
           const b64=await toB64(f);
           content.push({type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}});
         }
-        userPrompt=`Please perform a cross-discipline coordination review of the ${entries.length} uploaded discipline drawings.${projTxt}${locTxt}${revTxt}`;
-        content.push({type:"text",text:userPrompt});
+        content.push({type:"text",text:`Please perform a cross-discipline coordination review.${projTxt}${locTxt}${revTxt}`});
       } else if(isSubmittal){
         const b64=await toB64(file);
         const refB64=await toB64(refFile);
@@ -270,18 +210,18 @@ Be specific about sheet numbers and code sections where applicable.`;
         ];
       } else {
         const b64=await toB64(file);
-        userPrompt=(reviewType==="custom"?customPrompt.trim():"Please perform a QC review of this document.")+projTxt+locTxt+phaseTxt+revTxt;
+        const up=reviewType==="custom"?customPrompt.trim():"Please perform a QC review of this document.";
         content=[
           {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-          {type:"text",text:userPrompt}
+          {type:"text",text:up+projTxt+locTxt+revTxt}
         ];
       }
-
-      const timeoutPromise=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
-      const fetchPromise=fetch("/api/claude",{
+      setStoredContent(content);
+      if(abortRef.current){setLoading(false);return;}
+      const timeoutP=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
+      const fetchP=fetch("/api/claude",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        signal:controller.signal,
         body:JSON.stringify({
           model:"claude-sonnet-4-20250514",
           max_tokens:3000,
@@ -289,19 +229,56 @@ Be specific about sheet numbers and code sections where applicable.`;
           messages:[{role:"user",content}]
         })
       });
-      const resp=await Promise.race([fetchPromise,timeoutPromise]);
+      const resp=await Promise.race([fetchP,timeoutP]);
       const data=await resp.json();
       if(data.error){setError("API Error: "+data.error.message);setLoading(false);return;}
-      const text=data.content?.map(i=>i.text||"").join("")||"No response received.";
-      setResults({text,ts:new Date().toLocaleString(),fileName:isCross?null:fileName,refFileName:isSubmittal?refFileName:null,crossFiles:isCross?Object.entries(crossFiles).map(([id,v])=>({id,name:v.name})):null,projName,projLoc,reviewer,reviewType,customPrompt});
+      const text=data.content?.map(i=>i.text||"").join("")||"No response.";
+      setResults({text,ts:new Date().toLocaleString(),fileName:isCross?null:fileName,refFileName:isSubmittal?refFileName:null,crossFiles:isCross?Object.entries(crossFiles).map(([id,v])=>({id,name:v.name})):null,projName,projLoc,reviewer,reviewType,customPrompt,feedbackHistory:[]});
     }catch(e){
       if(e.name==="AbortError")setError("Review cancelled.");
-      else if(e.message==="timeout")setError("⏱ Request timed out — the server may be waking up. Wait 15 seconds and try again.");
+      else if(e.message==="timeout")setError("⏱ Request timed out — server may be waking up. Wait 15 seconds and try again.");
       else setError("Request failed: "+e.message);
     }
     setLoading(false);
   };
 
+  // ── Rerun with feedback ───────────────────────────────
+  const rerunWithFeedback=async()=>{
+    if(!feedback.trim()||!results||!storedContent)return;
+    setFeedbackLoading(true);
+    abortRef.current=false;
+    try{
+      const timeoutP2=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),90000));
+      const fetchP2=fetch("/api/claude",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:3000,
+          system:getSystemPrompt(),
+          messages:[
+            {role:"user",content:storedContent},
+            {role:"assistant",content:results.text},
+            {role:"user",content:"Please revise the review based on this feedback: "+feedback.trim()+"\n\nKeep all valid findings. Add, remove, or adjust findings based on my feedback. Return the full updated review in the same CRITICAL ISSUES / MAJOR COMMENTS / MINOR COMMENTS / RECOMMENDATIONS format."}
+          ]
+        })
+      });
+      const resp=await Promise.race([fetchP2,timeoutP2]);
+      const data=await resp.json();
+      if(data.error){setError("API Error: "+data.error.message);setFeedbackLoading(false);return;}
+      const text=data.content?.map(i=>i.text||"").join("")||"No response.";
+      const hist=[...(results.feedbackHistory||[]),{feedback:feedback.trim(),ts:new Date().toLocaleString()}];
+      setResults(p=>({...p,text,feedbackHistory:hist}));
+      setFeedback("");
+    }catch(e){
+      if(e.name==="AbortError")setError("Cancelled.");
+      else if(e.message==="timeout")setError("⏱ Timed out — try again.");
+      else setError("Request failed: "+e.message);
+    }
+    setFeedbackLoading(false);
+  };
+
+  // ── Export ────────────────────────────────────────────
   const exportReport=()=>{
     if(!results)return;
     const rt=REVIEW_TYPES.find(r=>r.id===results.reviewType);
@@ -311,6 +288,7 @@ Be specific about sheet numbers and code sections where applicable.`;
     if(results.crossFiles)txt+=`Disciplines: ${results.crossFiles.map(f=>f.name).join(", ")}\n`;
     txt+=`Reviewer: ${results.reviewer||"---"}\nReview Type: ${rt?.label}\nDate: ${results.ts}\n`;
     if(results.reviewType==="custom")txt+=`Prompt: ${results.customPrompt}\n`;
+    if(results.feedbackHistory?.length)txt+=`Feedback Revisions: ${results.feedbackHistory.length}\n`;
     txt+=`${"=".repeat(60)}\n\n${results.text}`;
     const a=document.createElement("a");
     a.href="data:text/plain;charset=utf-8,"+encodeURIComponent(txt);
@@ -336,17 +314,15 @@ Be specific about sheet numbers and code sections where applicable.`;
         {results&&<button onClick={exportReport} style={{padding:"7px 16px",background:"rgba(255,255,255,0.15)",color:"#fff",border:"2px solid rgba(255,255,255,0.4)",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>📥 Export Report</button>}
       </div>
 
-      {/* ── TOP CONTROLS ── */}
+      {/* Top controls */}
       <div style={{background:C.surface,borderBottom:"1px solid "+C.border,padding:"16px 24px",flexShrink:0}}>
-
-        {/* Review Type row */}
-        <div style={{marginBottom:14}}>
+        <div style={{marginBottom:reviewType==="partial"||reviewType==="custom"||reviewType==="cross"?12:0}}>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Review Type</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {REVIEW_TYPES.map(rt=>{
               const act=reviewType===rt.id;
               return(
-                <div key={rt.id} onClick={()=>{setReviewType(rt.id);setResults(null);setError("");}} style={{display:"flex",alignItems:"center",gap:7,padding:"8px 14px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
+                <div key={rt.id} onClick={()=>{setReviewType(rt.id);setResults(null);setError("");setStoredContent(null);setFeedback("");}} style={{display:"flex",alignItems:"center",gap:7,padding:"8px 14px",borderRadius:8,border:"2px solid "+(act?C.accent:C.border),background:act?C.accentLight:C.surface,cursor:"pointer",userSelect:"none",transition:"all 0.15s"}}>
                   <div style={{width:13,height:13,borderRadius:"50%",border:"2px solid "+(act?C.accent:C.border),background:act?C.accent:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{act&&<div style={{width:4,height:4,borderRadius:"50%",background:"white"}}/>}</div>
                   <span style={{fontSize:12}}>{rt.icon}</span>
                   <span style={{fontSize:12,fontWeight:act?700:500,color:act?C.accent:C.text}}>{rt.label}</span>
@@ -356,7 +332,6 @@ Be specific about sheet numbers and code sections where applicable.`;
           </div>
         </div>
 
-        {/* Conditional controls row */}
         {reviewType==="partial"&&(
           <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",border:"1px solid "+C.border}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -386,38 +361,36 @@ Be specific about sheet numbers and code sections where applicable.`;
             <label style={{fontSize:11,color:C.muted,marginBottom:5,display:"block",fontWeight:600}}>Your Review Prompt</label>
             <textarea value={customPrompt} onChange={e=>setCustomPrompt(e.target.value)}
               placeholder="Describe what you want reviewed... e.g. Check all duct sizes against the schedule and flag any exceeding max velocity"
-              style={{...inp,height:80,resize:"vertical",fontSize:12,lineHeight:1.6}}/>
+              style={{...inp,height:70,resize:"vertical",fontSize:12,lineHeight:1.6}}/>
             <div style={{fontSize:10,color:customPrompt.length<10?C.danger:C.success,marginTop:3}}>{customPrompt.length<10?"Enter at least 10 characters":"✓ Ready"}</div>
           </div>
         )}
 
         {reviewType==="cross"&&(
           <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",border:"1px solid "+C.border}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Select Disciplines to Compare</div>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Disciplines Loaded</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {DISCIPLINE_TYPES.map(disc=>{
                 const hasFile=!!crossFiles[disc.id];
-                const act=hasFile;
                 return(
-                  <div key={disc.id} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"2px solid "+(act?disc.color:C.border),background:act?disc.color+"12":C.surface,fontSize:12}}>
+                  <div key={disc.id} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"2px solid "+(hasFile?disc.color:C.border),background:hasFile?disc.color+"12":C.surface,fontSize:12}}>
                     <span>{disc.icon}</span>
-                    <span style={{fontWeight:act?700:400,color:act?disc.color:C.text}}>{disc.label}</span>
-                    {hasFile&&<span style={{fontSize:10,color:disc.color,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {crossFiles[disc.id].name}</span>}
+                    <span style={{fontWeight:hasFile?700:400,color:hasFile?disc.color:C.text}}>{disc.label}</span>
+                    {hasFile&&<span style={{fontSize:10,color:disc.color}}>✓</span>}
                   </div>
                 );
               })}
             </div>
-            {crossCount<2&&<div style={{fontSize:11,color:C.warn,marginTop:6}}>⚠ Upload at least 2 discipline PDFs below to run a cross-discipline review</div>}
+            {crossCount<2&&<div style={{fontSize:11,color:C.warn,marginTop:6}}>⚠ Upload at least 2 discipline PDFs below</div>}
             {crossCount>=2&&<div style={{fontSize:11,color:C.success,marginTop:6}}>✓ {crossCount} disciplines ready to compare</div>}
           </div>
         )}
-
       </div>
 
-      {/* ── MAIN LAYOUT ── */}
+      {/* Main layout */}
       <div style={{display:"grid",gridTemplateColumns:"260px 1fr",flex:1,minHeight:0}}>
 
-        {/* Sidebar — project info only */}
+        {/* Sidebar */}
         <div style={{background:C.surface,borderRight:"1px solid "+C.border,padding:"20px 16px",overflowY:"auto"}}>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Project Info</div>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -425,8 +398,6 @@ Be specific about sheet numbers and code sections where applicable.`;
             <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Project Location</label><input style={sinp} value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="e.g. Austin, TX"/></div>
             <div><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Reviewer Initials</label><input style={sinp} value={reviewer} onChange={e=>setReviewer(e.target.value)} placeholder="e.g. JD"/></div>
           </div>
-
-          {/* Review type description */}
           <div style={{marginTop:20,padding:"12px",background:C.bg,borderRadius:8,border:"1px solid "+C.border}}>
             <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:4}}>{activeReview?.icon} {activeReview?.label}</div>
             <div style={{fontSize:11,color:C.muted,lineHeight:1.6}}>{activeReview?.desc}</div>
@@ -439,49 +410,39 @@ Be specific about sheet numbers and code sections where applicable.`;
           {/* Upload zones */}
           {isCross?(
             <div>
-              <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Upload a PDF for each discipline you want to compare:</div>
+              <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Upload a PDF for each discipline to compare:</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:20}}>
                 {DISCIPLINE_TYPES.map(disc=>(
-                  <FileZone
-                    key={disc.id}
-                    file={crossFiles[disc.id]?.file||null}
-                    fileName={crossFiles[disc.id]?.name||""}
-                    onFile={f=>handleCrossFile(disc.id,f)}
-                    onRemove={()=>removeCrossFile(disc.id)}
-                    loading={loading}
-                    label={disc.label+" Drawings"}
-                    sublabel={"Drop "+disc.label.toLowerCase()+" PDF"}
-                    color={disc.color}
-                    tag={disc.icon}
-                  />
+                  <FileZone key={disc.id}
+                    file={crossFiles[disc.id]?.file||null} fileName={crossFiles[disc.id]?.name||""}
+                    onFile={f=>handleCrossFile(disc.id,f)} onRemove={()=>removeCrossFile(disc.id)}
+                    loading={loading} label={disc.label+" Drawings"} sublabel={"Drop "+disc.label.toLowerCase()+" PDF"}
+                    color={disc.color} tag={disc.icon}/>
                 ))}
               </div>
             </div>
           ):isSubmittal?(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
-              <FileZone file={file} fileName={fileName} onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");}} loading={loading} label="① Submittal PDF" sublabel="Product data, shop drawings, equipment submittals" color={C.accent} tag="1"/>
-              <FileZone file={refFile} fileName={refFileName} onFile={handleRefFile} onRemove={()=>{setRefFile(null);setRefFileName("");}} loading={loading} label="② Reference Drawing / Spec" sublabel="Contract drawing or specification to compare against" color="#7C3AED" tag="2"/>
+              <FileZone file={file} fileName={fileName} onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");setStoredContent(null);}} loading={loading} label="① Submittal PDF" sublabel="Product data, shop drawings, equipment submittals" color={C.accent} tag="1"/>
+              <FileZone file={refFile} fileName={refFileName} onFile={handleRefFile} onRemove={()=>{setRefFile(null);setRefFileName("");}} loading={loading} label="② Reference Drawing / Spec" sublabel="Contract drawing or specification" color="#7C3AED" tag="2"/>
             </div>
           ):(
             <div style={{marginBottom:20}}>
-              <FileZone
-                file={file} fileName={fileName}
-                onFile={handleFile} onRemove={()=>{setFile(null);setFileName("");setResults(null);}}
-                loading={loading}
-                label="Drag & drop a PDF or click to browse"
-                sublabel={reviewType==="proposal"?"Proposal PDFs — scope, fee, schedule, terms":reviewType==="narrative"?"Basis of design, engineering reports, or narratives":"Mechanical drawings, calculations, or specifications"}
-              />
+              <FileZone file={file} fileName={fileName} onFile={handleFile}
+                onRemove={()=>{setFile(null);setFileName("");setResults(null);setStoredContent(null);}}
+                loading={loading} label="Drag & drop a PDF or click to browse"
+                sublabel={reviewType==="proposal"?"Proposal PDFs":reviewType==="narrative"?"Reports or narratives":"Mechanical drawings, calculations, or specifications"}/>
             </div>
           )}
 
           {/* Warnings */}
-          {isSubmittal&&file&&!refFile&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Upload the reference drawing or spec (Document 2) to run the comparison.</div>}
+          {isSubmittal&&file&&!refFile&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Also upload the reference drawing or spec to run the comparison.</div>}
           {file&&fileSize>8*1024*1024&&<div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#92400E"}}>⚠️ Large file ({(fileSize/1024/1024).toFixed(1)} MB) — try splitting into fewer sheets if it times out.</div>}
           {error&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:14,color:C.danger,fontSize:13}}>{error}</div>}
 
           {/* Run button */}
           {(file||isCross)&&!loading&&(
-            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"13px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:22,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            <button onClick={runReview} disabled={!canRun} style={{width:"100%",padding:"13px",background:canRun?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:canRun?"pointer":"not-allowed",marginBottom:22}}>
               {activeReview?.icon} Run {activeReview?.label}
             </button>
           )}
@@ -491,14 +452,9 @@ Be specific about sheet numbers and code sections where applicable.`;
             <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:36,textAlign:"center",marginBottom:20}}>
               <div style={{width:42,height:42,borderRadius:"50%",border:"3px solid "+C.border,borderTopColor:C.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/>
               <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:5}}>
-                {reviewType==="cross"?`Comparing ${crossCount} discipline drawings...`:
-                 reviewType==="submittal"?"Comparing submittal against reference...":
-                 "Running "+activeReview?.label+"..."}
+                {reviewType==="cross"?`Comparing ${crossCount} discipline drawings...`:reviewType==="submittal"?"Comparing submittal against reference...":"Running "+activeReview?.label+"..."}
               </div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:18}}>
-                {reviewType==="cross"?DISCIPLINE_TYPES.filter(d=>crossFiles[d.id]).map(d=>d.label).join(" · "):
-                 "This may take 30–60 seconds"}
-              </div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:18}}>This may take 30–60 seconds</div>
               <button onClick={cancelReview} style={{padding:"7px 18px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>
             </div>
           )}
@@ -506,11 +462,40 @@ Be specific about sheet numbers and code sections where applicable.`;
           {/* Results */}
           {results&&(
             <div style={{animation:"fadeIn 0.3s ease"}}>
+
+              {/* Feedback box */}
+              <div style={{background:C.surface,border:"2px solid "+C.accent,borderRadius:12,padding:"16px 18px",marginBottom:14}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:4}}>💬 Refine This Review</div>
+                <div style={{fontSize:11,color:C.muted,marginBottom:10}}>Enter feedback to revise specific findings — the AI will update the review based on your input without needing to re-upload the PDF.</div>
+                {results.feedbackHistory?.length>0&&(
+                  <div style={{marginBottom:10,display:"flex",flexDirection:"column",gap:5}}>
+                    {results.feedbackHistory.map((h,i)=>(
+                      <div key={i} style={{fontSize:11,background:C.bg,borderRadius:6,padding:"5px 10px",border:"1px solid "+C.border,color:C.muted}}>
+                        <strong style={{color:C.text}}>Revision {i+1}:</strong> {h.feedback} <span style={{color:C.light}}>· {h.ts}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <textarea value={feedback} onChange={e=>setFeedback(e.target.value)}
+                  placeholder="e.g. You missed the fire damper issue on sheet M2.01 — please add that. Also remove the insulation comment, it is not applicable here."
+                  style={{...inp,height:70,resize:"vertical",fontSize:12,lineHeight:1.6,marginBottom:10}}/>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <button onClick={rerunWithFeedback} disabled={!feedback.trim()||feedbackLoading}
+                    style={{padding:"8px 20px",background:feedback.trim()&&!feedbackLoading?C.accent:"#9CA3AF",color:"#fff",border:"none",borderRadius:7,fontSize:13,fontWeight:600,cursor:feedback.trim()&&!feedbackLoading?"pointer":"not-allowed",display:"flex",alignItems:"center",gap:7}}>
+                    {feedbackLoading?<><div style={{width:14,height:14,borderRadius:"50%",border:"2px solid rgba(255,255,255,0.4)",borderTopColor:"#fff",animation:"spin 0.8s linear infinite"}}/>Revising...</>:"🔄 Revise Review"}
+                  </button>
+                  {feedbackLoading&&<button onClick={cancelReview} style={{padding:"8px 14px",background:"transparent",color:C.danger,border:"1px solid "+C.danger,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Cancel</button>}
+                  <span style={{fontSize:11,color:C.muted}}>PDF stays loaded — no need to re-upload</span>
+                </div>
+              </div>
+
+              {/* Result header */}
               <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                 <div>
                   <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
                     <div style={{fontSize:15,fontWeight:700,color:C.text}}>{REVIEW_TYPES.find(r=>r.id===results.reviewType)?.icon} {REVIEW_TYPES.find(r=>r.id===results.reviewType)?.label}</div>
                     <span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,border:"1px solid "+C.border,padding:"2px 8px",borderRadius:20}}>{countFindings(results.text)} findings</span>
+                    {results.feedbackHistory?.length>0&&<span style={{fontSize:11,fontWeight:600,color:C.accent,background:C.accentLight,border:"1px solid #BFDBFE",padding:"2px 8px",borderRadius:20}}>{results.feedbackHistory.length} revision{results.feedbackHistory.length!==1?"s":""}</span>}
                   </div>
                   <div style={{fontSize:11,color:C.muted}}>
                     {results.crossFiles?results.crossFiles.map(f=>f.name).join(" · "):results.fileName}
@@ -520,14 +505,11 @@ Be specific about sheet numbers and code sections where applicable.`;
                     {results.reviewer&&" · "+results.reviewer}
                     {" · "+results.ts}
                   </div>
-                  {results.reviewType==="custom"&&results.customPrompt&&(
-                    <div style={{marginTop:5,fontSize:11,color:C.muted,background:C.accentLight,borderRadius:5,padding:"4px 9px",border:"1px solid #BFDBFE",maxWidth:560}}>
-                      <strong style={{color:C.accent}}>Prompt:</strong> {results.customPrompt}
-                    </div>
-                  )}
                 </div>
                 <button onClick={exportReport} style={{padding:"6px 13px",background:"transparent",color:C.accent,border:"1px solid "+C.accent,borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>📥 Export</button>
               </div>
+
+              {/* Findings */}
               <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
                 <div style={{padding:"11px 16px",background:"#F8FAFC",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:600,color:C.text}}>Review Findings</div>
                 <div style={{padding:14}}>
@@ -554,7 +536,7 @@ Be specific about sheet numbers and code sections where applicable.`;
             <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:12,padding:50,textAlign:"center"}}>
               <div style={{fontSize:44,marginBottom:14}}>🔀</div>
               <div style={{fontSize:15,fontWeight:600,marginBottom:6,color:C.muted}}>Cross Discipline Review</div>
-              <div style={{fontSize:12,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>Upload PDFs from at least 2 disciplines above. Claude will compare all drawings together and identify coordination conflicts, spatial clashes, and inconsistencies between disciplines.</div>
+              <div style={{fontSize:12,maxWidth:440,margin:"0 auto",lineHeight:1.8,color:C.light}}>Upload PDFs from at least 2 disciplines above. Claude will compare all drawings and identify coordination conflicts, spatial clashes, and inconsistencies between disciplines.</div>
             </div>
           )}
         </div>
